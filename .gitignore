@@ -1,0 +1,31 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# ---- Runtime state written while the system runs ----
+# (regenerated on every run; the dataset itself in code/data/ IS kept)
+code/data/retry_policy.json
+code/data/*.tmp
+code/data/graph_snapshots.pkl
+code/results/logs/
+
+# ---- Backups made by run_pipeline.py ----
+code/data_previous/
+code/results_previous/
+
+# ---- Big downloads ----
+*.tar.gz
+MSCallGraph_*
+
+# ---- Staging area, not part of the project ----
+DELETE/
+
+# ---- Office / OS clutter ----
+~$*
+Thumbs.db
+desktop.ini
+.DS_Store

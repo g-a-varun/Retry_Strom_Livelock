@@ -1,0 +1,1 @@
+{"failure_rate": 0.02, "min_latency_ms": 10, "max_latency_ms": 40, "queue_wait_sec": 1.0}

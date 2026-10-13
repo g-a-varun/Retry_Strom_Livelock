@@ -1,0 +1,25 @@
+Threshold sensitivity (one parameter moved at a time, others at default)
+========================================================================
+parameter    value     false alarms     ramp    fault   recovery
+RHO_CRIT       0.5          0 / 636       11       81         64
+RHO_CRIT      0.75          0 / 636        9       66         64
+RHO_CRIT       1.0          0 / 636        9       56         63 <- default
+RHO_CRIT      1.25          0 / 636        8       48         63
+RHO_CRIT       1.5          0 / 636        6       35         56
+BETA           0.3          0 / 636        9       51         63
+BETA           0.4          0 / 636        9       52         63
+BETA           0.5          0 / 636        9       56         63 <- default
+BETA           0.6          0 / 636        9       60         63
+BETA           0.7          0 / 636       11       65         63
+C_FACTOR       1.5          0 / 636        9       56         63
+C_FACTOR       2.0          0 / 636        9       56         63 <- default
+C_FACTOR       3.0          0 / 636        9       56         63
+C_FACTOR       4.0          0 / 636        8       47         63
+TREND_TOL      0.0          0 / 636        8       20         17
+TREND_TOL      0.1          0 / 636        9       41         44
+TREND_TOL      0.2          0 / 636        9       56         63 <- default
+TREND_TOL      0.3          0 / 636        9       63         81
+TAU_LOCK         1          0 / 636       23       86         74
+TAU_LOCK         2          0 / 636        9       56         63 <- default
+TAU_LOCK         3          0 / 636        2       39         52
+TAU_LOCK         4          0 / 636        1       22         43

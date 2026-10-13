@@ -1,0 +1,17 @@
+{
+  "gateway->order_service": {
+    "latency_ms": 188.69633065950273,
+    "concurrency": 3.27897310256958,
+    "s_useful": 17.125
+  },
+  "order_service->payment_service": {
+    "latency_ms": 75.03223147308617,
+    "concurrency": 1.3769899904727936,
+    "s_useful": 17.0
+  },
+  "order_service->inventory_service": {
+    "latency_ms": 69.51924188135195,
+    "concurrency": 1.257576197385788,
+    "s_useful": 17.125
+  }
+}

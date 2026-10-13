@@ -1,0 +1,25 @@
+Livelock detection -- group 'experiment'
+========================================
+scenarios: 50   windows (edge x 2s): 3825   labelled livelock: 118
+
+livelock windows by edge and phase (livelock / total)
+  edge                                        normal          ramp         fault      recovery
+  gateway->order_service                     0 / 250       8 / 250      39 / 250      51 / 475
+  order_service->payment_service             0 / 250       0 / 250      15 / 250       0 / 475
+  order_service->inventory_service           0 / 250       0 / 250       0 / 250       0 / 475
+
+false alarms during healthy traffic (normal phase): 0 of 750 windows
+users who arrived in a window flagged livelock on any edge got a success 9.7% of the time
+users who arrived in any other fault/recovery window got a success 47.9% of the time
+
+livelock windows per experiment and retry strategy (all repetitions together)
+  error_burst_no_retry              0 windows, livelock formed in 0 of 5 runs
+  error_burst_predictive            4 windows, livelock formed in 3 of 5 runs
+  error_burst_reactive              2 windows, livelock formed in 1 of 5 runs
+  error_burst_retry_budget          0 windows, livelock formed in 0 of 5 runs
+  error_burst_static_retry         15 windows, livelock formed in 5 of 5 runs
+  metastable_no_retry               0 windows, livelock formed in 0 of 5 runs
+  metastable_predictive             0 windows, livelock formed in 0 of 5 runs
+  metastable_reactive              12 windows, livelock formed in 5 of 5 runs
+  metastable_retry_budget           0 windows, livelock formed in 0 of 5 runs
+  metastable_static_retry          85 windows, livelock formed in 5 of 5 runs

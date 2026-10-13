@@ -1,0 +1,149 @@
+Retry strategies under the same fault (mean +/- std over repeated runs)
+========================================================================
+
+EXPERIMENT: metastable   (payment latency ramps to ~800ms, order queue 10s, 20 users/s)
+  success% normal
+    no_retry             89.4 +/- 2.4      (n=5: 87.1, 93.2, 90.0, 88.9, 87.6)
+    static_retry        100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+    retry_budget        100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+    reactive            100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+    predictive          100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+  success% fault
+    no_retry              5.2 +/- 0.6      (n=5: 4.3, 5.9, 5.0, 4.9, 5.7)
+    static_retry          6.0 +/- 1.2      (n=5: 6.3, 5.2, 4.9, 7.9, 5.8)
+    retry_budget          5.1 +/- 0.6      (n=5: 5.3, 4.7, 4.4, 5.3, 5.9)
+    reactive              5.6 +/- 1.1      (n=5: 6.5, 4.9, 6.8, 5.9, 4.0)
+    predictive            6.2 +/- 0.5      (n=5: 6.1, 6.1, 7.0, 5.6, 6.0)
+  success% after
+    no_retry             47.8 +/- 5.6      (n=5: 51.0, 40.1, 51.8, 52.4, 43.6)
+    static_retry          2.0 +/- 0.4      (n=5: 1.8, 2.2, 1.7, 2.7, 1.6)
+    retry_budget         29.4 +/- 13.8     (n=5: 45.9, 20.7, 42.9, 19.2, 18.2)
+    reactive             38.0 +/- 11.1     (n=5: 29.7, 45.0, 22.8, 44.2, 48.4)
+    predictive           46.9 +/- 8.4      (n=5: 40.3, 44.1, 51.2, 39.5, 59.5)
+  recovery s
+    no_retry             11.6 +/- 1.5      (n=5: 11.0, 14.0, 11.0, 10.0, 12.0)
+    static_retry         25.0 +/- 0.0      (n=5: 25.0, 25.0, 25.0, 25.0, 25.0)
+    retry_budget         18.8 +/- 4.4      (n=5: 14.0, 20.0, 15.0, 20.0, 25.0)
+    reactive             15.6 +/- 2.4      (n=5: 17.0, 15.0, 19.0, 14.0, 13.0)
+    predictive           13.2 +/- 2.2      (n=5: 15.0, 14.0, 12.0, 15.0, 10.0)
+  calls in fault
+    no_retry              663 +/- 15       (n=5: 673, 667, 677, 641, 656)
+    static_retry         1216 +/- 77       (n=5: 1187, 1294, 1293, 1116, 1192)
+    retry_budget          678 +/- 21       (n=5: 700, 665, 662, 701, 662)
+    reactive              977 +/- 33       (n=5: 926, 983, 976, 980, 1018)
+    predictive            667 +/- 19       (n=5: 680, 686, 637, 671, 662)
+  calls/success
+    no_retry             31.9 +/- 3.9      (n=5: 37.4, 27.8, 32.2, 33.7, 28.5)
+    static_retry         52.8 +/- 8.6      (n=5: 49.5, 58.8, 61.6, 39.9, 54.2)
+    retry_budget         33.9 +/- 3.8      (n=5: 31.8, 36.9, 38.9, 31.9, 30.1)
+    reactive             45.8 +/- 9.9      (n=5: 38.6, 51.7, 36.1, 42.6, 59.9)
+    predictive           28.4 +/- 2.1      (n=5: 27.2, 28.6, 25.5, 30.5, 30.1)
+  orphaned% fault
+    no_retry             81.1 +/- 1.7      (n=5: 81.4, 78.7, 82.5, 82.7, 80.3)
+    static_retry         72.4 +/- 2.6      (n=5: 73.3, 73.8, 73.6, 67.8, 73.4)
+    retry_budget         81.4 +/- 1.7      (n=5: 80.4, 82.7, 83.3, 81.2, 79.3)
+    reactive             77.4 +/- 4.1      (n=5: 76.9, 80.4, 72.8, 74.2, 82.5)
+    predictive           76.3 +/- 2.0      (n=5: 73.4, 76.9, 75.2, 78.4, 77.3)
+  orphaned% after
+    no_retry             61.8 +/- 4.6      (n=5: 59.0, 68.1, 59.9, 57.1, 64.9)
+    static_retry         98.6 +/- 0.5      (n=5: 98.9, 98.5, 99.0, 97.8, 98.9)
+    retry_budget         80.3 +/- 9.6      (n=5: 69.1, 86.1, 70.6, 86.9, 88.7)
+    reactive             72.6 +/- 8.3      (n=5: 77.7, 67.5, 84.6, 69.0, 64.2)
+    predictive           64.8 +/- 6.8      (n=5: 70.6, 66.2, 61.5, 71.1, 54.8)
+  p95 ms fault
+    no_retry             2008 +/- 0        (n=5: 2009, 2007, 2008, 2008, 2008)
+    static_retry         6289 +/- 3        (n=5: 6285, 6287, 6290, 6289, 6293)
+    retry_budget         4088 +/- 3        (n=5: 4083, 4088, 4088, 4090, 4091)
+    reactive             6275 +/- 5        (n=5: 6272, 6270, 6280, 6280, 6271)
+    predictive           4175 +/- 11       (n=5: 4183, 4165, 4172, 4165, 4189)
+  recovered within the observation window: no_retry 5/5, static_retry 0/5, retry_budget 4/5, reactive 5/5, predictive 5/5
+  significance (Welch t-test p-values, n is small so read with care):
+    recovery_success_pct   static_retry  vs reactive    p = 0.002
+    recovery_success_pct   static_retry  vs predictive  p = 0.000
+    recovery_success_pct   retry_budget  vs predictive  p = 0.047
+    recovery_success_pct   reactive      vs predictive  p = 0.194
+    fault_success_pct      static_retry  vs reactive    p = 0.574
+    fault_success_pct      static_retry  vs predictive  p = 0.819
+    fault_success_pct      retry_budget  vs predictive  p = 0.017
+    fault_success_pct      reactive      vs predictive  p = 0.357
+    fault_calls            static_retry  vs reactive    p = 0.001
+    fault_calls            static_retry  vs predictive  p = 0.000
+    fault_calls            retry_budget  vs predictive  p = 0.416
+    fault_calls            reactive      vs predictive  p = 0.000
+    recovery_sec           static_retry  vs reactive    p = 0.001
+    recovery_sec           static_retry  vs predictive  p = 0.000
+    recovery_sec           retry_budget  vs predictive  p = 0.046
+    recovery_sec           reactive      vs predictive  p = 0.137
+
+EXPERIMENT: error_burst   (payment error rate ramps to 70%, order queue 1s, 20 users/s)
+  success% normal
+    no_retry             87.8 +/- 1.7      (n=5: 89.5, 86.1, 89.4, 86.2, 87.9)
+    static_retry        100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+    retry_budget        100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+    reactive            100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+    predictive          100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+  success% fault
+    no_retry             39.5 +/- 3.0      (n=5: 43.2, 40.8, 40.1, 38.5, 35.1)
+    static_retry         72.6 +/- 3.5      (n=5: 72.5, 69.7, 68.6, 76.6, 75.7)
+    retry_budget         52.8 +/- 6.1      (n=5: 54.0, 61.9, 51.9, 51.5, 44.9)
+    reactive             68.1 +/- 2.1      (n=5: 65.1, 67.2, 70.1, 67.9, 69.9)
+    predictive           52.7 +/- 1.6      (n=5: 53.3, 50.7, 52.2, 55.0, 52.0)
+  success% after
+    no_retry             89.0 +/- 2.3      (n=5: 85.3, 88.3, 91.0, 90.7, 89.6)
+    static_retry        100.0 +/- 0.0      (n=5: 100.0, 100.0, 100.0, 100.0, 100.0)
+    retry_budget         99.7 +/- 0.5      (n=5: 98.8, 100.0, 100.0, 99.6, 100.0)
+    reactive             99.5 +/- 0.5      (n=5: 99.7, 99.6, 99.7, 100.0, 98.6)
+    predictive           97.0 +/- 1.1      (n=5: 95.7, 96.3, 97.9, 96.4, 98.5)
+  recovery s
+    no_retry              0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    static_retry          0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    retry_budget          0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    reactive              0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    predictive            0.2 +/- 0.4      (n=5: 1.0, 0.0, 0.0, 0.0, 0.0)
+  calls in fault
+    no_retry             1192 +/- 21       (n=5: 1218, 1159, 1195, 1199, 1190)
+    static_retry         1711 +/- 102      (n=5: 1732, 1782, 1829, 1609, 1603)
+    retry_budget         1363 +/- 54       (n=5: 1313, 1352, 1409, 1313, 1430)
+    reactive             1566 +/- 39       (n=5: 1517, 1553, 1607, 1604, 1548)
+    predictive           1405 +/- 96       (n=5: 1548, 1455, 1342, 1360, 1318)
+  calls/success
+    no_retry              7.5 +/- 0.6      (n=5: 6.9, 7.2, 7.4, 7.7, 8.4)
+    static_retry          5.8 +/- 0.4      (n=5: 5.9, 6.3, 6.1, 5.3, 5.6)
+    retry_budget          6.7 +/- 0.8      (n=5: 6.5, 5.6, 6.7, 6.8, 7.8)
+    reactive              5.7 +/- 0.2      (n=5: 5.7, 5.4, 5.6, 5.6, 6.0)
+    predictive            6.6 +/- 0.2      (n=5: 6.3, 6.9, 6.7, 6.7, 6.4)
+  orphaned% fault
+    no_retry              0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    static_retry          0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    retry_budget          0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    reactive              0.1 +/- 0.1      (n=5: 0.0, 0.0, 0.3, 0.0, 0.0)
+    predictive            0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+  orphaned% after
+    no_retry              0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    static_retry          0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    retry_budget          0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    reactive              0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+    predictive            0.0 +/- 0.0      (n=5: 0.0, 0.0, 0.0, 0.0, 0.0)
+  p95 ms fault
+    no_retry              278 +/- 24       (n=5: 307, 249, 297, 271, 267)
+    static_retry         4040 +/- 28       (n=5: 4033, 4080, 4053, 4004, 4032)
+    retry_budget          621 +/- 71       (n=5: 736, 599, 559, 574, 639)
+    reactive             3954 +/- 61       (n=5: 3959, 3900, 3991, 3888, 4032)
+    predictive           1992 +/- 668      (n=5: 2387, 2347, 1984, 2404, 837)
+  recovered within the observation window: no_retry 5/5, static_retry 5/5, retry_budget 5/5, reactive 5/5, predictive 5/5
+  significance (Welch t-test p-values, n is small so read with care):
+    recovery_success_pct   static_retry  vs reactive    p = 0.108
+    recovery_success_pct   static_retry  vs predictive  p = 0.004
+    recovery_success_pct   retry_budget  vs predictive  p = 0.004
+    recovery_success_pct   reactive      vs predictive  p = 0.005
+    fault_success_pct      static_retry  vs reactive    p = 0.045
+    fault_success_pct      static_retry  vs predictive  p = 0.000
+    fault_success_pct      retry_budget  vs predictive  p = 0.959
+    fault_success_pct      reactive      vs predictive  p = 0.000
+    fault_calls            static_retry  vs reactive    p = 0.030
+    fault_calls            static_retry  vs predictive  p = 0.001
+    fault_calls            retry_budget  vs predictive  p = 0.432
+    fault_calls            reactive      vs predictive  p = 0.016
+    recovery_sec           static_retry  vs predictive  p = 0.374
+    recovery_sec           retry_budget  vs predictive  p = 0.374
+    recovery_sec           reactive      vs predictive  p = 0.374

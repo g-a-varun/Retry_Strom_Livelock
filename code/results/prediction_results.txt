@@ -1,0 +1,55 @@
+Livelock prediction -- will this edge be in livelock in the next 2-12 seconds?
+==============================================================================
+examples: 1458 (edge x 2s window) from 28 scenarios, 216 positive (14.8%)
+evaluation: 5-fold cross-validation grouped by scenario (test runs never seen in training)
+
+ALL WINDOWS
+  method                                   precision  recall     f1  PR-AUC    f1 per fold
+  logistic regression (ours)                    0.68    0.85   0.75    0.84  0.75 +/- 0.06
+    - without graph features                    0.66    0.84   0.74    0.80  0.73 +/- 0.07
+    - without temporal features                 0.66    0.85   0.75    0.84  0.73 +/- 0.08
+  random forest (comparison)                    0.76    0.84   0.80    0.88  0.79 +/- 0.08
+  shuffled-label control                        0.09    0.29   0.14    0.14  0.14 +/- 0.05
+  rule: storm right now (reactive)              0.72    0.52   0.60     -                -
+  rule: livelock right now (persistence)        0.87    0.38   0.53     -                -
+  chance level (PR-AUC of a random guess) = 0.15
+
+ONSET ONLY -- edge is NOT in livelock now; will it be soon? (1341 examples, 123 positive)
+  method                                   precision  recall     f1  PR-AUC
+  logistic regression (ours)                    0.58    0.76   0.66    0.74
+    - without graph features                    0.55    0.73   0.63    0.63
+    - without temporal features                 0.55    0.76   0.64    0.73
+  random forest (comparison)                    0.68    0.73   0.70    0.79
+  shuffled-label control                        0.06    0.34   0.11    0.09
+  rule: storm right now (reactive)              0.50    0.24   0.32     -  
+  rule: livelock right now (persistence)        0.00    0.00   0.00     -  
+
+EARLY WARNING -- 30 livelock episodes in the data
+  our model                warned before onset in 30/30 episodes, median warning 8.0s ahead (range 2-10s)
+                           alarms during healthy traffic: 8 of 576 windows (1.4%)
+  reactive rule            warned before onset in 24/30 episodes, median warning 2.0s ahead (range 2-10s)
+                           alarms during healthy traffic: 0 of 576 windows (0.0%)
+
+confusion matrix of our model, all windows [[TN, FP], [FN, TP]]: [[1156, 86], [33, 183]]
+
+final model trained on all 1458 examples, saved to results/model.json
+self-check: hand-computed risk vs scikit-learn, largest difference = 3.33e-16 (OK)
+
+what the model looks at (weight on the standardised feature;
+positive = pushes towards 'livelock coming'):
+  fail_ratio               +1.890
+  overload_ratio           -1.647
+  concurrency_ratio        +1.528
+  down_max_latency_ratio   +1.521
+  edge_gateway_order       +0.862
+  down_max_overload        -0.840
+  edge_order_payment       -0.793
+  latency_ratio            -0.601
+  d_latency_ratio          +0.507
+  up_overload_ratio        -0.437
+  down_max_fail_ratio      -0.364
+  d_fail_ratio             +0.199
+  rho                      -0.127
+  d_rho                    +0.077
+  edge_order_inventory     -0.069
+  up_rho                   +0.027

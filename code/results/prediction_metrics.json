@@ -1,0 +1,211 @@
+{
+  "all": {
+    "logistic regression (ours)": {
+      "precision": 0.6802973977695167,
+      "recall": 0.8472222222222222,
+      "f1": 0.7546391752577319,
+      "positives": 216,
+      "n": 1458,
+      "pr_auc": 0.8431119370568227
+    },
+    "without graph features": {
+      "precision": 0.6618181818181819,
+      "recall": 0.8425925925925926,
+      "f1": 0.7413441955193483,
+      "positives": 216,
+      "n": 1458,
+      "pr_auc": 0.7995422878820563
+    },
+    "without temporal features": {
+      "precision": 0.6642599277978339,
+      "recall": 0.8518518518518519,
+      "f1": 0.7464503042596349,
+      "positives": 216,
+      "n": 1458,
+      "pr_auc": 0.8358887551414428
+    },
+    "random forest (comparison)": {
+      "precision": 0.7637130801687764,
+      "recall": 0.8379629629629629,
+      "f1": 0.7991169977924945,
+      "positives": 216,
+      "n": 1458,
+      "pr_auc": 0.8841510486385351
+    },
+    "shuffled-label control": {
+      "precision": 0.09197080291970802,
+      "recall": 0.2916666666666667,
+      "f1": 0.13984461709211987,
+      "positives": 216,
+      "n": 1458,
+      "pr_auc": 0.14375507864050313
+    },
+    "rule: storm right now (reactive)": {
+      "precision": 0.7151898734177216,
+      "recall": 0.5231481481481481,
+      "f1": 0.6042780748663101,
+      "positives": 216,
+      "n": 1458,
+      "pr_auc": null
+    },
+    "rule: livelock right now (persistence)": {
+      "precision": 0.8736842105263158,
+      "recall": 0.38425925925925924,
+      "f1": 0.5337620578778135,
+      "positives": 216,
+      "n": 1458,
+      "pr_auc": null
+    }
+  },
+  "onset": {
+    "logistic regression (ours)": {
+      "precision": 0.5766871165644172,
+      "recall": 0.7642276422764228,
+      "f1": 0.6573426573426573,
+      "positives": 123,
+      "n": 1341,
+      "pr_auc": 0.7361960183037911
+    },
+    "without graph features": {
+      "precision": 0.5487804878048781,
+      "recall": 0.7317073170731707,
+      "f1": 0.627177700348432,
+      "positives": 123,
+      "n": 1341,
+      "pr_auc": 0.6348209238230726
+    },
+    "without temporal features": {
+      "precision": 0.5535714285714286,
+      "recall": 0.7560975609756098,
+      "f1": 0.6391752577319587,
+      "positives": 123,
+      "n": 1341,
+      "pr_auc": 0.7318511398013586
+    },
+    "random forest (comparison)": {
+      "precision": 0.6766917293233082,
+      "recall": 0.7317073170731707,
+      "f1": 0.703125,
+      "positives": 123,
+      "n": 1341,
+      "pr_auc": 0.7858067137805455
+    },
+    "shuffled-label control": {
+      "precision": 0.06382978723404255,
+      "recall": 0.34146341463414637,
+      "f1": 0.10755441741357234,
+      "positives": 123,
+      "n": 1341,
+      "pr_auc": 0.08783951950188108
+    },
+    "rule: storm right now (reactive)": {
+      "precision": 0.5,
+      "recall": 0.23577235772357724,
+      "f1": 0.32044198895027626,
+      "positives": 123,
+      "n": 1341,
+      "pr_auc": null
+    },
+    "rule: livelock right now (persistence)": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "positives": 123,
+      "n": 1341,
+      "pr_auc": null
+    }
+  },
+  "early_warning": {
+    "our model": {
+      "lead_times": [
+        8.0,
+        8.0,
+        10.0,
+        10.0,
+        10.0,
+        6.0,
+        8.0,
+        4.0,
+        8.0,
+        10.0,
+        8.0,
+        10.0,
+        10.0,
+        8.0,
+        8.0,
+        8.0,
+        10.0,
+        8.0,
+        10.0,
+        6.0,
+        8.0,
+        10.0,
+        6.0,
+        10.0,
+        6.0,
+        8.0,
+        10.0,
+        10.0,
+        8.0,
+        2.0
+      ],
+      "missed": 0,
+      "episodes": 30,
+      "healthy_alarms": 8,
+      "healthy_windows": 576
+    },
+    "reactive rule": {
+      "lead_times": [
+        2.0,
+        2.0,
+        2.0,
+        10.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        10.0,
+        2.0,
+        2.0,
+        2.0,
+        10.0,
+        2.0,
+        2.0,
+        10.0,
+        2.0,
+        2.0,
+        10.0,
+        10.0,
+        2.0
+      ],
+      "missed": 6,
+      "episodes": 30,
+      "healthy_alarms": 0,
+      "healthy_windows": 576
+    }
+  },
+  "n_examples": 1458,
+  "n_positive": 216,
+  "n_scenarios": 28,
+  "weights": {
+    "rho": -0.12675149027701807,
+    "fail_ratio": 1.890122459933177,
+    "overload_ratio": -1.6468284261586257,
+    "latency_ratio": -0.6012410130110241,
+    "concurrency_ratio": 1.5276865087053015,
+    "d_rho": 0.07711487782605707,
+    "d_fail_ratio": 0.19932479023714197,
+    "d_latency_ratio": 0.5074599597932539,
+    "down_max_overload": -0.8396897203522041,
+    "down_max_latency_ratio": 1.5211724940442592,
+    "down_max_fail_ratio": -0.36430907289614883,
+    "up_rho": 0.02697341230001775,
+    "up_overload_ratio": -0.4371859906889494,
+    "edge_gateway_order": 0.8618943013505441,
+    "edge_order_payment": -0.7926586678606325,
+    "edge_order_inventory": -0.0692356334899047
+  }
+}

@@ -1,0 +1,63 @@
+Data validation -- 78 scenarios, 263864 call attempts, 71621 user requests, 335485 server records
+==============================================================================
+1. Bookkeeping -- nothing lost, nothing invented
+  [PASS] user requests sent == user requests logged, in every scenario (largest gap: 0)
+  [PASS] requests received by a service == first attempts its caller logged (largest gap: 0)
+2. Retry rules -- attempts numbered 1,2,3... and never above the policy limit
+  [PASS] 218897 logical calls checked: attempts always numbered 1..k in order (0 broken)
+  [PASS] no call made more attempts than its policy allowed (0 violations)
+  [PASS] a call is never retried after it succeeded (0 violations)
+3. Queueing theory -- Utilization Law U = X*S/c <= 1, saturation throughput = c/S
+  [PASS] no 2s window ever had a service more than 100% busy (highest: 100.0%)
+     latency-fault scenarios, during the held fault:
+     scenario                       service             c service time       theory c/S         measured    peak busy
+     ds_01                          payment_service     2        805ms          2.48/s          2.17/s         100%
+     ds_02                          payment_service     2        501ms          3.99/s          3.50/s         100%
+     ds_03                          payment_service     2        510ms          3.92/s          3.50/s         100%
+     ds_04                          inventory_service   2        606ms          3.30/s          3.00/s         100%
+     ds_05                          payment_service     2        614ms          3.26/s          2.86/s         100%
+     ds_06                          inventory_service   2        699ms          2.86/s          2.50/s         100%
+     ds_08                          inventory_service   2        904ms          2.21/s          2.00/s         100%
+     ds_13                          payment_service     2        800ms          2.50/s          2.20/s         100%
+     ds_15                          inventory_service   2        900ms          2.22/s          2.09/s         100%
+     ds_16                          payment_service     2        606ms          3.30/s          3.18/s         100%
+     ds_18                          payment_service     2        495ms          4.04/s          3.91/s         100%
+     ds_21                          payment_service     2        594ms          3.37/s          3.25/s         100%
+     ds_22                          payment_service     2        922ms          2.17/s          1.89/s         100%
+     ds_23                          payment_service     2        513ms          3.90/s          3.67/s         100%
+     exp_metastable_retry_budget_r1 payment_service     2        800ms          2.50/s          2.30/s         100%
+     exp_metastable_no_retry_r1     payment_service     2        779ms          2.57/s          2.40/s         100%
+     exp_metastable_static_retry_r1 payment_service     2        816ms          2.45/s          2.20/s         100%
+     exp_metastable_predictive_r1   payment_service     2        801ms          2.50/s          2.20/s         100%
+     exp_metastable_reactive_r1     payment_service     2        791ms          2.53/s          2.20/s         100%
+     exp_metastable_retry_budget_r2 payment_service     2        810ms          2.47/s          2.30/s         100%
+     exp_metastable_predictive_r2   payment_service     2        822ms          2.43/s          2.20/s         100%
+     exp_metastable_static_retry_r2 payment_service     2        812ms          2.46/s          2.20/s         100%
+     exp_metastable_reactive_r2     payment_service     2        810ms          2.47/s          2.20/s         100%
+     exp_metastable_no_retry_r2     payment_service     2        811ms          2.47/s          2.30/s         100%
+     exp_metastable_no_retry_r3     payment_service     2        808ms          2.47/s          2.30/s         100%
+     exp_metastable_reactive_r3     payment_service     2        790ms          2.53/s          2.20/s         100%
+     exp_metastable_retry_budget_r3 payment_service     2        777ms          2.58/s          2.50/s         100%
+     exp_metastable_static_retry_r3 payment_service     2        792ms          2.52/s          2.20/s         100%
+     exp_metastable_predictive_r3   payment_service     2        777ms          2.57/s          2.30/s         100%
+     exp_metastable_static_retry_r4 payment_service     2        803ms          2.49/s          2.20/s         100%
+     exp_metastable_reactive_r4     payment_service     2        784ms          2.55/s          2.40/s         100%
+     exp_metastable_no_retry_r4     payment_service     2        810ms          2.47/s          2.30/s         100%
+     exp_metastable_retry_budget_r4 payment_service     2        817ms          2.45/s          2.30/s         100%
+     exp_metastable_predictive_r4   payment_service     2        823ms          2.43/s          2.20/s         100%
+     exp_metastable_static_retry_r5 payment_service     2        770ms          2.60/s          2.40/s         100%
+     exp_metastable_retry_budget_r5 payment_service     2        796ms          2.51/s          2.30/s         100%
+     exp_metastable_no_retry_r5     payment_service     2        800ms          2.50/s          2.30/s         100%
+     exp_metastable_predictive_r5   payment_service     2        795ms          2.52/s          2.30/s         100%
+     exp_metastable_reactive_r5     payment_service     2        791ms          2.53/s          2.30/s         100%
+  [PASS] under the held fault, measured throughput is 91% of the c/S limit on average (the service is saturated: busy, not idle)
+4. Fault injection -- the service really behaved as configured
+  [PASS] latency faults: every run's measured service time is within 2.5 standard errors of the configured value (39 runs; average bias +0.4%, Python timer + logging overhead)
+  [PASS] error faults: every run's measured failure fraction is within 2.3 standard errors of the configured rate (35 runs)
+  [PASS] healthy leaf services fail 5.0% of requests on average (configured 5%)
+5. Load generator -- users arrive at the configured rate
+  [PASS] achieved arrival rate within 2.5% of the target on average (worst 8.7%, random Poisson arrivals)
+6. Timestamps -- nothing ends before it starts
+  [PASS] 670970 records checked, 0 with impossible times
+
+6 of 6 check groups passed
