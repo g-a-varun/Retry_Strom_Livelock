@@ -1,3 +1,4 @@
+import argparse
 import csv
 import json
 import os
@@ -14,28 +15,11 @@ from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import StandardScaler
 
 from common.config import DATA_DIR, RESULTS_DIR, EDGES, edge_name, make_dirs
+from matplotlib.ticker import MaxNLocator
+
+from common.plots import plt, save_figure, BLUE, ORANGE, GREEN, RED, GREY
 from features import (make_features, feature_vector, risk_probability, reactive_alarm,
                       FEATURE_NAMES, TEMPORAL_FEATURES, GRAPH_FEATURES, WINDOW_SEC)
-
-# Module 6: livelock prediction.
-#
-# Question asked for every edge, every 2 seconds:
-#   "will this edge be in livelock at some point in the next 2-12 seconds?"
-#
-# Inputs: the features from features.py (this edge now, how it changed,
-# and its neighbours in the service graph). Label: the livelock label from
-# labeling.py, looked up in the FUTURE windows (never the current one).
-#
-# Honest evaluation:
-#   - grouped cross-validation: the test scenarios are never seen in
-#     training, not even other windows of the same run
-#   - compared against simple baselines that need no learning
-#   - a shuffled-label control (if that scores as well, the model learned nothing)
-#   - ablations: without the graph features, without the temporal features
-#   - lead time: how many seconds BEFORE a livelock starts the alarm goes up
-#
-# evaluate_model.py then looks at the saved out-of-fold scores in more
-# detail (MCC, ROC-AUC, calibration, confidence intervals, run-time cost).
 
 LABELED_PATH = os.path.join(DATA_DIR, "labeled_windows.csv")
 BASELINES_PATH = os.path.join(DATA_DIR, "baselines.json")
@@ -47,7 +31,8 @@ METRICS_PATH = os.path.join(RESULTS_DIR, "prediction_metrics.json")
 GAP_WINDOWS = 1
 HORIZON_WINDOWS = 5
 N_FOLDS = 5
-THRESHOLD = 0.5
+N_INNER_FOLDS = 4
+THRESHOLD_GRID = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
 
 STAT_FIELDS = ["n_calls", "lambda_base", "lambda_retry", "rho", "s_useful", "concurrency",
                "p_success", "fail_ratio", "overload_ratio", "mean_latency_ms"]
@@ -60,7 +45,6 @@ def to_number(text):
 
 
 def load_windows():
-    # returns {scenario_id: {window_index: {edge: row}}}
     with open(LABELED_PATH, "r") as f:
         rows = list(csv.DictReader(f))
 
@@ -152,18 +136,72 @@ def labels(examples):
 
 
 def make_logistic():
-    return LogisticRegression(class_weight="balanced", max_iter=2000, C=1.0)
+    return LogisticRegression(class_weight="balanced", max_iter=5000, C=1.0)
 
 
 def make_forest():
-    return RandomForestClassifier(n_estimators=200, max_depth=6, min_samples_leaf=3,
+    return RandomForestClassifier(n_estimators=100, max_depth=6, min_samples_leaf=3,
                                   class_weight="balanced", random_state=0)
 
 
+def fit_and_score(model_kind, x_train, y_train, x_test):
+    if sum(y_train) == 0 or sum(y_train) == len(y_train):
+        rate = float(sum(y_train)) / max(len(y_train), 1)
+        return [rate] * len(x_test)
+    scaler = StandardScaler()
+    x_train_scaled = scaler.fit_transform(x_train)
+    x_test_scaled = scaler.transform(x_test)
+    if model_kind == "forest":
+        model = make_forest()
+    else:
+        model = make_logistic()
+    model.fit(x_train_scaled, y_train)
+    return [float(p) for p in model.predict_proba(x_test_scaled)[:, 1]]
+
+
+def grouped_oof(model_kind, x, y, groups, n_folds):
+    probs = [0.0] * len(y)
+    splitter = GroupKFold(n_splits=n_folds)
+    for train_index, test_index in splitter.split(x, y, groups):
+        scores = fit_and_score(model_kind,
+                               [x[i] for i in train_index], [y[i] for i in train_index],
+                               [x[i] for i in test_index])
+        k = 0
+        for i in test_index:
+            probs[i] = scores[k]
+            k = k + 1
+    return probs
+
+
+def f1_at(y, probs, threshold):
+    tp = 0
+    fp = 0
+    fn = 0
+    for i in range(len(y)):
+        alarm = probs[i] >= threshold
+        if alarm and y[i] == 1:
+            tp = tp + 1
+        elif alarm:
+            fp = fp + 1
+        elif y[i] == 1:
+            fn = fn + 1
+    if tp == 0:
+        return 0.0
+    return 2.0 * tp / (2.0 * tp + fp + fn)
+
+
+def best_threshold(y, probs):
+    best = THRESHOLD_GRID[0]
+    best_f1 = -1.0
+    for t in THRESHOLD_GRID:
+        f1 = f1_at(y, probs, t)
+        if f1 > best_f1 + 1e-12:
+            best = t
+            best_f1 = f1
+    return best
+
+
 def cross_validate(examples, feature_names, model_kind, shuffle_labels, shuffle_seed=0):
-    # out-of-fold probabilities: each example is scored by a model that
-    # never saw its scenario. shuffle_seed only matters for the
-    # shuffled-label control (evaluate_model.py repeats it with other seeds).
     groups = []
     for example in examples:
         groups.append(example["scenario_id"])
@@ -171,58 +209,48 @@ def cross_validate(examples, feature_names, model_kind, shuffle_labels, shuffle_
     x_all = matrix(examples, feature_names)
     y_all = labels(examples)
     probs = [0.0] * len(examples)
-    fold_f1 = []
+    thresholds = [0.5] * len(examples)
+    fold_thresholds = []
 
     splitter = GroupKFold(n_splits=N_FOLDS)
     fold_number = 0
     for train_index, test_index in splitter.split(x_all, y_all, groups):
         x_train = [x_all[i] for i in train_index]
         y_train = [y_all[i] for i in train_index]
+        g_train = [groups[i] for i in train_index]
         x_test = [x_all[i] for i in test_index]
-        y_test = [y_all[i] for i in test_index]
 
         if shuffle_labels:
             rng = random.Random(fold_number + 1000 * shuffle_seed)
             rng.shuffle(y_train)
 
-        if sum(y_train) == 0 or sum(y_train) == len(y_train):
-            # a fold with only one class cannot be trained; predict the base rate
-            for i in test_index:
-                probs[i] = float(sum(y_train)) / max(len(y_train), 1)
-            fold_number = fold_number + 1
-            continue
+        inner = grouped_oof(model_kind, x_train, y_train, g_train, N_INNER_FOLDS)
+        threshold = best_threshold(y_train, inner)
+        fold_thresholds.append(threshold)
 
-        scaler = StandardScaler()
-        x_train_scaled = scaler.fit_transform(x_train)
-        x_test_scaled = scaler.transform(x_test)
-
-        if model_kind == "forest":
-            model = make_forest()
-        else:
-            model = make_logistic()
-        model.fit(x_train_scaled, y_train)
-        fold_probs = model.predict_proba(x_test_scaled)[:, 1]
-
-        fold_pred = []
+        scores = fit_and_score(model_kind, x_train, y_train, x_test)
         k = 0
         for i in test_index:
-            probs[i] = float(fold_probs[k])
-            fold_pred.append(1 if fold_probs[k] >= THRESHOLD else 0)
+            probs[i] = scores[k]
+            thresholds[i] = threshold
             k = k + 1
-        if sum(y_test) > 0:
-            fold_f1.append(f1_score(y_test, fold_pred, zero_division=0))
         fold_number = fold_number + 1
 
-    return probs, fold_f1
+    return probs, thresholds, fold_thresholds
 
 
 def score(y_true, y_pred, probs):
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel().tolist()
+    n = len(y_true)
+    denominator = ((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)) ** 0.5
     result = {
+        "accuracy": float(tp + tn) / n if n else 0.0,
         "precision": precision_score(y_true, y_pred, zero_division=0),
         "recall": recall_score(y_true, y_pred, zero_division=0),
         "f1": f1_score(y_true, y_pred, zero_division=0),
+        "mcc": (tp * tn - fp * fn) / denominator if denominator > 0 else 0.0,
         "positives": sum(y_true),
-        "n": len(y_true),
+        "n": n,
     }
     if probs is not None and 0 < sum(y_true) < len(y_true):
         result["pr_auc"] = average_precision_score(y_true, probs)
@@ -231,10 +259,10 @@ def score(y_true, y_pred, probs):
     return result
 
 
-def predictions_from(probs):
+def alarms_from(probs, thresholds):
     pred = []
-    for p in probs:
-        pred.append(1 if p >= THRESHOLD else 0)
+    for i in range(len(probs)):
+        pred.append(1 if probs[i] >= thresholds[i] else 0)
     return pred
 
 
@@ -247,8 +275,6 @@ def subset(values, keep):
 
 
 def episodes(examples):
-    # a livelock episode = consecutive livelock windows on one edge of one
-    # scenario. Returns (scenario, edge, onset window index) for each.
     labelled = {}
     for example in examples:
         key = (example["scenario_id"], example["edge"])
@@ -266,8 +292,6 @@ def episodes(examples):
 
 
 def lead_times(examples, alarms):
-    # for every episode: the earliest alarm in the HORIZON windows before
-    # it started. lead time = how much warning that gave, in seconds.
     alarm_at = {}
     for i in range(len(examples)):
         example = examples[i]
@@ -301,7 +325,6 @@ def median_of(values):
 
 
 def false_alarm_rate(examples, alarms):
-    # alarms raised during healthy, fault-free traffic
     healthy = 0
     raised = 0
     for i in range(len(examples)):
@@ -312,154 +335,193 @@ def false_alarm_rate(examples, alarms):
     return raised, healthy
 
 
-def fmt(value):
+def fmt(value, digits=3):
     if value is None:
-        return "  -  "
-    return "%.2f" % value
+        return "-"
+    return "%.*f" % (digits, value)
+
+
+METHODS = [
+    ("Logistic regression", "logistic", "all", False),
+    ("  w/o graph features", "logistic", "no_graph", False),
+    ("  w/o temporal features", "logistic", "no_temporal", False),
+    ("Random forest", "forest", "all", False),
+    ("Shuffled labels", "logistic", "all", True),
+]
+RULES = ["Reactive rule", "Persistence rule"]
+OURS = "Logistic regression"
+
+
+def draw(saved, model, show):
+    fig = plt.figure(figsize=(11, 8))
+    grid = fig.add_gridspec(2, 2, height_ratios=[1, 1.15])
+    ax_a = fig.add_subplot(grid[0, :])
+    ax_b = fig.add_subplot(grid[1, 0])
+    ax_c = fig.add_subplot(grid[1, 1])
+
+    names = ["Logistic regression", "w/o graph features", "w/o temporal features", "Random forest",
+             "Reactive rule", "Persistence rule", "Shuffled labels"]
+    labels = ["Logistic\nregression", "w/o graph", "w/o temporal", "Random\nforest", "Reactive\nrule",
+              "Persistence\nrule", "Shuffled\nlabels"]
+    metrics = [("precision", "Precision", BLUE), ("recall", "Recall", ORANGE), ("f1", "F1", GREEN),
+               ("mcc", "MCC", RED)]
+    width = 0.2
+    for k in range(len(metrics)):
+        key, label, colour = metrics[k]
+        xs = [i + (k - 1.5) * width for i in range(len(names))]
+        values = [saved["all"][n][key] for n in names]
+        ax_a.bar(xs, values, width=width, color=colour, label=label)
+        ax_a.grid(False, axis="x")
+    ax_a.set_xticks(range(len(names)))
+    ax_a.set_xticklabels(labels, fontsize=9)
+    ax_a.set_ylim(-0.25, 1.05)
+    ax_a.axhline(0, color="black", linewidth=0.8)
+    ax_a.grid(axis="x", visible=False)
+    ax_a.set_title("(a) Out-of-fold scores, runs never seen in training")
+    ax_a.legend(ncol=4, loc="upper right")
+
+    bins = [2, 4, 6, 8, 10]
+    for offset, key, colour, label in [(-0.4, "our model", BLUE, "Logistic regression"),
+                                       (0.4, "reactive rule", GREY, "Reactive rule")]:
+        data = saved["early_warning"][key]
+        counts = [len([x for x in data["lead_times"] if abs(x - b) < 0.01]) for b in bins]
+        ax_b.bar([b + offset for b in bins], counts, width=0.8, color=colour,
+                 label="%s: %d/%d warned" % (label, len(data["lead_times"]), data["episodes"]))
+        ax_b.grid(False, axis="x")
+    ax_b.set_xticks(bins)
+    ax_b.set_xlabel("Warning before livelock onset (s)")
+    ax_b.set_ylabel("Episodes")
+    ax_b.grid(axis="x", visible=False)
+    ax_b.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax_b.set_title("(b) Early warning")
+    ax_b.legend(loc="upper right")
+
+    pairs = []
+    for i in range(len(model["feature_names"])):
+        pairs.append((abs(model["weights"][i]), model["feature_names"][i], model["weights"][i]))
+    pairs.sort()
+    ax_c.barh(range(len(pairs)), [p[2] for p in pairs], color=[BLUE if p[2] > 0 else ORANGE for p in pairs])
+    ax_c.set_yticks(range(len(pairs)))
+    ax_c.set_yticklabels([p[1] for p in pairs], fontsize=8)
+    ax_c.axvline(0, color="black", linewidth=0.8)
+    ax_c.grid(axis="y", visible=False)
+    ax_c.set_xlabel("Weight (standardised feature)")
+    ax_c.set_title("(c) Final model weights, threshold %.2f" % model["threshold"])
+    fig.tight_layout()
+    return save_figure(fig, "prediction.png", show)
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_show", action="store_true")
+    args = parser.parse_args()
     make_dirs()
-    if not os.path.exists(LABELED_PATH):
-        print("error: %s not found. Run labeling.py first." % LABELED_PATH)
-        sys.exit(1)
-    if not os.path.exists(BASELINES_PATH):
-        print("error: %s not found. Run labeling.py first." % BASELINES_PATH)
+    if not os.path.exists(LABELED_PATH) or not os.path.exists(BASELINES_PATH):
+        print("error: run labeling.py first")
         sys.exit(1)
 
     with open(BASELINES_PATH, "r") as f:
         baselines = json.load(f)
     for edge in EDGES:
         if edge_name(edge) not in baselines:
-            print("error: no healthy baseline for %s -- the dataset has no traffic on it" % edge_name(edge))
+            print("error: no baseline for %s" % edge_name(edge))
             sys.exit(1)
 
     scenarios = load_windows()
     examples = build_examples(scenarios, baselines)
     y = labels(examples)
     n_scenarios = len(scenarios)
-
-    lines = []
-    lines.append("Livelock prediction -- will this edge be in livelock in the next %d-%d seconds?"
-                 % (GAP_WINDOWS * WINDOW_SEC, (GAP_WINDOWS + HORIZON_WINDOWS) * WINDOW_SEC))
-    lines.append("=" * 78)
-    lines.append("examples: %d (edge x 2s window) from %d scenarios, %d positive (%.1f%%)"
-                 % (len(examples), n_scenarios, sum(y), 100.0 * sum(y) / max(len(y), 1)))
-
     if sum(y) < 5 or n_scenarios < N_FOLDS:
-        lines.append("")
-        lines.append("NOT ENOUGH DATA: need at least %d scenarios and 5 positive examples." % N_FOLDS)
-        lines.append("Run generate_dataset.py (or more scenario_runner.py runs) and labeling.py again.")
-        print("\n".join(lines))
+        print("error: not enough data (%d runs, %d positive windows)" % (n_scenarios, sum(y)))
         sys.exit(1)
 
-    lines.append("evaluation: %d-fold cross-validation grouped by scenario (test runs never seen in training)"
-                 % N_FOLDS)
-    lines.append("")
-
-    no_graph = []
-    no_temporal = []
+    feature_sets = {"all": FEATURE_NAMES, "no_graph": [], "no_temporal": []}
     for name in FEATURE_NAMES:
         if name not in GRAPH_FEATURES:
-            no_graph.append(name)
+            feature_sets["no_graph"].append(name)
         if name not in TEMPORAL_FEATURES:
-            no_temporal.append(name)
+            feature_sets["no_temporal"].append(name)
 
-    print("cross-validating the model, the baselines and the ablations...")
-    runs = [
-        ("logistic regression (ours)", FEATURE_NAMES, "logistic", False),
-        ("  - without graph features", no_graph, "logistic", False),
-        ("  - without temporal features", no_temporal, "logistic", False),
-        ("random forest (comparison)", FEATURE_NAMES, "forest", False),
-        ("shuffled-label control", FEATURE_NAMES, "logistic", True),
-    ]
+    print("Cross-validating %d models (%d folds grouped by run, nested threshold search)..."
+          % (len(METHODS), N_FOLDS), flush=True)
+    probs_by = {}
+    alarms_by = {}
+    fold_thr_by = {}
+    for title, kind, feature_set, shuffle in METHODS:
+        probs, thresholds, fold_thresholds = cross_validate(examples, feature_sets[feature_set], kind, shuffle)
+        probs_by[title] = probs
+        alarms_by[title] = alarms_from(probs, thresholds)
+        fold_thr_by[title] = fold_thresholds
+        if title == OURS:
+            ours_thresholds = thresholds
 
-    results = {}
-    oof = {}
-    for title, names, kind, shuffle in runs:
-        probs, fold_f1 = cross_validate(examples, names, kind, shuffle)
-        oof[title] = probs
-        results[title] = (score(y, predictions_from(probs), probs), fold_f1)
-
-    rule_rho = []
-    rule_persist = []
-    for example in examples:
-        rule_rho.append(example["reactive_now"])
-        rule_persist.append(example["label_now"])
-    results["rule: storm right now (reactive)"] = (score(y, rule_rho, None), [])
-    results["rule: livelock right now (persistence)"] = (score(y, rule_persist, None), [])
-
-    order = [r[0] for r in runs] + ["rule: storm right now (reactive)",
-                                    "rule: livelock right now (persistence)"]
+    alarms_by["Reactive rule"] = [example["reactive_now"] for example in examples]
+    alarms_by["Persistence rule"] = [example["label_now"] for example in examples]
+    order = [m[0] for m in METHODS] + RULES
 
     saved = {"all": {}, "onset": {}, "early_warning": {}, "n_examples": len(examples),
-             "n_positive": sum(y), "n_scenarios": n_scenarios}
-    for title in order:
-        saved["all"][title.strip(" -")] = results[title][0]
+             "n_positive": sum(y), "n_scenarios": n_scenarios, "fold_thresholds": fold_thr_by[OURS]}
 
-    lines.append("ALL WINDOWS")
-    lines.append("  %-40s %9s %7s %6s %7s %14s" % ("method", "precision", "recall", "f1", "PR-AUC", "f1 per fold"))
+    lines = []
+    lines.append("LIVELOCK PREDICTION  |  horizon %d-%d s  |  %d-fold grouped CV  |  %d runs, %d windows, %d positive (%.1f%%)"
+                 % (GAP_WINDOWS * WINDOW_SEC, (GAP_WINDOWS + HORIZON_WINDOWS) * WINDOW_SEC, N_FOLDS,
+                    n_scenarios, len(examples), sum(y), 100.0 * sum(y) / len(y)))
+    lines.append("")
+    header = "%-26s %8s %8s %8s %8s %8s %8s" % ("Method", "Acc", "Prec", "Recall", "F1", "MCC", "PR-AUC")
+    lines.append("Table 1. All windows")
+    lines.append(header)
+    lines.append("-" * len(header))
     for title in order:
-        result, fold_f1 = results[title]
-        per_fold = "-"
-        if len(fold_f1) > 0:
-            mean = sum(fold_f1) / len(fold_f1)
-            var = 0.0
-            for v in fold_f1:
-                var = var + (v - mean) ** 2
-            std = (var / len(fold_f1)) ** 0.5
-            per_fold = "%.2f +/- %.2f" % (mean, std)
-        lines.append("  %-40s %9s %7s %6s %7s %14s" % (title, fmt(result["precision"]), fmt(result["recall"]),
-                                                       fmt(result["f1"]), fmt(result["pr_auc"]), per_fold))
-    lines.append("  chance level (PR-AUC of a random guess) = %.2f" % (float(sum(y)) / len(y)))
+        result = score(y, alarms_by[title], probs_by.get(title))
+        saved["all"][title.strip()] = result
+        lines.append("%-26s %8s %8s %8s %8s %8s %8s" % (title, fmt(result["accuracy"]), fmt(result["precision"]),
+                                                       fmt(result["recall"]), fmt(result["f1"]),
+                                                       fmt(result["mcc"]), fmt(result["pr_auc"])))
     lines.append("")
 
-    # the harder, more honest question: livelock that has NOT started yet
     keep = []
     for example in examples:
         keep.append(example["label_now"] == 0 and example["label_prev"] == 0)
     y_onset = subset(y, keep)
-    lines.append("ONSET ONLY -- edge is NOT in livelock now; will it be soon? (%d examples, %d positive)"
-                 % (len(y_onset), sum(y_onset)))
-    lines.append("  %-40s %9s %7s %6s %7s" % ("method", "precision", "recall", "f1", "PR-AUC"))
+    lines.append("Table 2. Onset windows (n = %d, positive = %d)" % (len(y_onset), sum(y_onset)))
+    lines.append(header)
+    lines.append("-" * len(header))
     for title in order:
-        if title in oof:
-            probs = subset(oof[title], keep)
-            result = score(y_onset, predictions_from(probs), probs)
-        elif "reactive" in title:
-            result = score(y_onset, subset(rule_rho, keep), None)
-        else:
-            result = score(y_onset, subset(rule_persist, keep), None)
-        lines.append("  %-40s %9s %7s %6s %7s" % (title, fmt(result["precision"]), fmt(result["recall"]),
-                                                  fmt(result["f1"]), fmt(result["pr_auc"])))
-        saved["onset"][title.strip(" -")] = result
+        probs = None
+        if title in probs_by:
+            probs = subset(probs_by[title], keep)
+        result = score(y_onset, subset(alarms_by[title], keep), probs)
+        saved["onset"][title.strip()] = result
+        lines.append("%-26s %8s %8s %8s %8s %8s %8s" % (title, fmt(result["accuracy"]), fmt(result["precision"]),
+                                                       fmt(result["recall"]), fmt(result["f1"]),
+                                                       fmt(result["mcc"]), fmt(result["pr_auc"])))
     lines.append("")
 
-    ours = oof["logistic regression (ours)"]
-    ours_alarm = predictions_from(ours)
     n_episodes = len(episodes(examples))
-    lines.append("EARLY WARNING -- %d livelock episodes in the data" % n_episodes)
-    for title, alarms in [("our model", ours_alarm), ("reactive rule", rule_rho)]:
-        leads, missed = lead_times(examples, alarms)
-        raised, healthy = false_alarm_rate(examples, alarms)
-        caught = len(leads)
-        line = "  %-24s warned before onset in %d/%d episodes" % (title, caught, n_episodes)
-        if caught > 0:
-            line = line + ", median warning %.1fs ahead (range %.0f-%.0fs)" % (
-                median_of(leads), min(leads), max(leads))
-        lines.append(line)
-        lines.append("  %-24s alarms during healthy traffic: %d of %d windows (%.1f%%)"
-                     % ("", raised, healthy, 100.0 * raised / max(healthy, 1)))
-        saved["early_warning"][title] = {"lead_times": leads, "missed": missed, "episodes": n_episodes,
-                                         "healthy_alarms": raised, "healthy_windows": healthy}
+    lines.append("Table 3. Early warning (%d livelock episodes)" % n_episodes)
+    header3 = "%-26s %8s %12s %10s %16s" % ("Method", "Warned", "Median (s)", "Range (s)", "Healthy alarms")
+    lines.append(header3)
+    lines.append("-" * len(header3))
+    for title, key in [(OURS, "our model"), ("Reactive rule", "reactive rule")]:
+        leads, missed = lead_times(examples, alarms_by[title])
+        raised, healthy = false_alarm_rate(examples, alarms_by[title])
+        span = "-"
+        middle = "-"
+        if len(leads) > 0:
+            span = "%.0f-%.0f" % (min(leads), max(leads))
+            middle = "%.1f" % median_of(leads)
+        lines.append("%-26s %8s %12s %10s %16s" % (title, "%d/%d" % (len(leads), n_episodes), middle, span,
+                                                    "%d/%d" % (raised, healthy)))
+        saved["early_warning"][key] = {"lead_times": leads, "missed": missed, "episodes": n_episodes,
+                                       "healthy_alarms": raised, "healthy_windows": healthy}
     lines.append("")
 
-    cm = confusion_matrix(y, ours_alarm, labels=[0, 1]).tolist()
-    lines.append("confusion matrix of our model, all windows [[TN, FP], [FN, TP]]: %s" % cm)
-    lines.append("")
+    cm = confusion_matrix(y, alarms_by[OURS], labels=[0, 1]).tolist()
+    saved["confusion_matrix"] = cm
 
-    # ---- final model on ALL data, saved for the live controller ----
+    groups = [example["scenario_id"] for example in examples]
     x_all = matrix(examples, FEATURE_NAMES)
+    final_threshold = best_threshold(y, grouped_oof("logistic", x_all, y, groups, N_FOLDS))
     scaler = StandardScaler()
     x_scaled = scaler.fit_transform(x_all)
     final = make_logistic()
@@ -471,34 +533,36 @@ def main():
         "std": [float(v) for v in scaler.scale_],
         "weights": [float(v) for v in final.coef_[0]],
         "intercept": float(final.intercept_[0]),
-        "threshold": THRESHOLD,
+        "threshold": final_threshold,
         "baselines": baselines,
         "horizon_sec": [GAP_WINDOWS * WINDOW_SEC, (GAP_WINDOWS + HORIZON_WINDOWS) * WINDOW_SEC],
         "trained_on_examples": len(examples),
         "trained_on_scenarios": n_scenarios,
     }
 
-    # self-check: the hand-written sigmoid in features.py must give exactly
-    # what scikit-learn gives, or the controller would act on wrong numbers
     sk_probs = final.predict_proba(x_scaled)[:, 1]
     worst = 0.0
     for i in range(len(examples)):
         diff = abs(risk_probability(model, examples[i]["values"]) - sk_probs[i])
         if diff > worst:
             worst = diff
-    lines.append("final model trained on all %d examples, saved to results/model.json" % len(examples))
-    lines.append("self-check: hand-computed risk vs scikit-learn, largest difference = %.2e (%s)"
-                 % (worst, "OK" if worst < 1e-6 else "MISMATCH"))
-    lines.append("")
 
-    lines.append("what the model looks at (weight on the standardised feature;")
-    lines.append("positive = pushes towards 'livelock coming'):")
+    lines.append("Confusion matrix (logistic regression):  TN = %d   FP = %d   FN = %d   TP = %d"
+                 % (cm[0][0], cm[0][1], cm[1][0], cm[1][1]))
+    lines.append("Decision threshold (nested CV, per fold): %s"
+                 % ", ".join("%.2f" % t for t in fold_thr_by[OURS]))
+    lines.append("Final model: %d features, threshold %.2f, trained on %d windows -> results/model.json"
+                 % (len(FEATURE_NAMES), final_threshold, len(examples)))
+    lines.append("Self-check |p(own code) - p(scikit-learn)| max = %.1e" % worst)
+
+    weight_lines = ["", "Table 4. Standardised weights (final model)", "%-28s %8s" % ("Feature", "Weight"), "-" * 37]
     pairs = []
     for i in range(len(FEATURE_NAMES)):
         pairs.append((abs(model["weights"][i]), FEATURE_NAMES[i], model["weights"][i]))
     pairs.sort(reverse=True)
     for size, name, weight in pairs:
-        lines.append("  %-24s %+.3f" % (name, weight))
+        weight_lines.append("%-28s %+8.3f" % (name, weight))
+    weight_lines.append("%-28s %+8.3f" % ("(intercept)", model["intercept"]))
 
     with open(MODEL_PATH, "w") as f:
         json.dump(model, f, indent=2)
@@ -506,33 +570,35 @@ def main():
     saved["weights"] = {}
     for i in range(len(FEATURE_NAMES)):
         saved["weights"][FEATURE_NAMES[i]] = model["weights"][i]
+    saved["threshold"] = final_threshold
     with open(METRICS_PATH, "w") as f:
         json.dump(saved, f, indent=2)
 
-    # out-of-fold scores of every method, one row per example. "risk" is our
-    # model; the other columns are there so evaluate_model.py can compare
-    # all methods on exactly the same windows.
     with open(OOF_PATH, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["scenario_id", "edge", "window_index", "t_rel", "phase", "label_now",
-                         "label_future", "risk", "rho_now", "label_prev", "p_no_graph",
-                         "p_no_temporal", "p_forest", "p_shuffled", "rule_reactive", "rule_persistence"])
+                         "label_future", "risk", "threshold", "alarm", "rho_now", "label_prev",
+                         "p_no_graph", "a_no_graph", "p_no_temporal", "a_no_temporal",
+                         "p_forest", "a_forest", "p_shuffled", "a_shuffled",
+                         "rule_reactive", "rule_persistence"])
         for i in range(len(examples)):
             example = examples[i]
             writer.writerow([example["scenario_id"], edge_name(example["edge"]), example["window_index"],
                              example["t_rel"], example["phase"], example["label_now"], example["label"],
-                             round(ours[i], 6), example["rho_now"], example["label_prev"],
-                             round(oof["  - without graph features"][i], 6),
-                             round(oof["  - without temporal features"][i], 6),
-                             round(oof["random forest (comparison)"][i], 6),
-                             round(oof["shuffled-label control"][i], 6),
-                             rule_rho[i], rule_persist[i]])
+                             round(probs_by[OURS][i], 6), ours_thresholds[i], alarms_by[OURS][i],
+                             example["rho_now"], example["label_prev"],
+                             round(probs_by["  w/o graph features"][i], 6), alarms_by["  w/o graph features"][i],
+                             round(probs_by["  w/o temporal features"][i], 6), alarms_by["  w/o temporal features"][i],
+                             round(probs_by["Random forest"][i], 6), alarms_by["Random forest"][i],
+                             round(probs_by["Shuffled labels"][i], 6), alarms_by["Shuffled labels"][i],
+                             alarms_by["Reactive rule"][i], alarms_by["Persistence rule"][i]])
 
     text = "\n".join(lines)
     print("")
     print(text)
     with open(REPORT_PATH, "w") as f:
-        f.write(text + "\n")
+        f.write(text + "\n" + "\n".join(weight_lines) + "\n")
+    draw(saved, model, not args.no_show)
 
 
 if __name__ == "__main__":

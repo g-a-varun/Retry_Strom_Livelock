@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import os
@@ -20,8 +21,6 @@ import evaluate_model
 import calibrate_from_trace
 from common import retry_policy, safe_files, telemetry, retry_client, fault_injection
 
-# Run all tests from the code/ folder with:
-#     python -m unittest discover tests -v
 
 GW = ("gateway", "order_service")
 PAY = ("order_service", "payment_service")
@@ -42,7 +41,6 @@ def stats(n_calls=20, rho=0.0, s_useful=10.0, concurrency=1.0, p_success=1.0,
 
 
 class WindowStatsTests(unittest.TestCase):
-
     def test_empty_window(self):
         s = features.window_stats_for_edge([], 0.0, 1)[0]
         self.assertEqual(s["n_calls"], 0)
@@ -58,9 +56,9 @@ class WindowStatsTests(unittest.TestCase):
         self.assertEqual(s["n_calls"], 5)
         self.assertAlmostEqual(s["rho"], 2.0 / 3.0)
         self.assertAlmostEqual(s["p_success"], 2.0 / 5.0)
-        self.assertAlmostEqual(s["fail_ratio"], 1.0 / 3.0)      # 1 of 3 fresh calls failed
-        self.assertAlmostEqual(s["overload_ratio"], 2.0 / 5.0)  # one 503 + one timeout
-        self.assertAlmostEqual(s["s_useful"], 1.0)              # 2 successes / 2 s
+        self.assertAlmostEqual(s["fail_ratio"], 1.0 / 3.0)
+        self.assertAlmostEqual(s["overload_ratio"], 2.0 / 5.0)
+        self.assertAlmostEqual(s["s_useful"], 1.0)
 
     def test_only_retries_gives_max_rho(self):
         s = features.window_stats_for_edge([call(0.5, 50, 2, 500)], 0.0, 1)[0]
@@ -74,11 +72,10 @@ class WindowStatsTests(unittest.TestCase):
         self.assertEqual(s["rho"], features.RHO_MAX)
 
     def test_concurrency_spreads_over_windows(self):
-        # one call in flight from t=0.5 to t=3.0 (windows of 2 s from t=0)
         s = features.window_stats_for_edge([call(3.0, 2500, 1, 200)], 0.0, 2)
         self.assertAlmostEqual(s[0]["concurrency"], 1.5 / 2.0)
         self.assertAlmostEqual(s[1]["concurrency"], 1.0 / 2.0)
-        self.assertEqual(s[0]["n_calls"], 0)   # counted where it ENDED
+        self.assertEqual(s[0]["n_calls"], 0)
         self.assertEqual(s[1]["n_calls"], 1)
 
     def test_records_outside_range_are_ignored(self):
@@ -87,7 +84,6 @@ class WindowStatsTests(unittest.TestCase):
 
 
 class ConditionTests(unittest.TestCase):
-
     def setUp(self):
         self.th = dict(labeling.DEFAULT_THRESHOLDS)
         self.base = {"s_useful": 20.0, "concurrency": 2.0, "latency_ms": 60.0}
@@ -95,9 +91,6 @@ class ConditionTests(unittest.TestCase):
     def test_healthy_window_is_not_livelock(self):
         now = stats(rho=0.05, s_useful=19.0, concurrency=2.0, lambda_retry=0.5)
         prev = stats(rho=0.05, s_useful=20.0, concurrency=2.0, lambda_retry=0.5)
-        # C4 on its own is TRUE here: a steady trickle of retries is "not
-        # falling". That is exactly why one condition is never enough and
-        # all four must hold together.
         self.assertEqual(labeling.check_conditions(now, prev, self.base, self.th),
                          (False, False, False, True))
 
@@ -108,15 +101,13 @@ class ConditionTests(unittest.TestCase):
                          (True, True, True, True))
 
     def test_recovering_storm_fails_condition_4(self):
-        # retries clearly falling, success clearly improving -> damping, not livelock
         now = stats(rho=1.5, s_useful=5.0, concurrency=30.0, p_success=0.5, lambda_retry=8.0)
         prev = stats(rho=2.0, s_useful=1.0, concurrency=40.0, p_success=0.05, lambda_retry=20.0)
         c1, c2, c3, c4 = labeling.check_conditions(now, prev, self.base, self.th)
         self.assertFalse(c4)
-        self.assertFalse(c3)   # concurrency fell by more than the noise tolerance
+        self.assertFalse(c3)
 
     def test_overload_without_retries_is_not_livelock(self):
-        # the no-retry arm under a fault: useless and slow, but no retry loop
         now = stats(rho=0.0, s_useful=1.0, concurrency=40.0, p_success=0.05, lambda_retry=0.0)
         prev = stats(rho=0.0, s_useful=1.0, concurrency=40.0, p_success=0.05, lambda_retry=0.0)
         c1, c2, c3, c4 = labeling.check_conditions(now, prev, self.base, self.th)
@@ -134,14 +125,12 @@ class ConditionTests(unittest.TestCase):
         self.assertFalse(labeling.check_conditions(now, None, self.base, self.th)[3])
 
     def test_flat_storm_within_noise_still_counts(self):
-        # retries 10% lower than 4 s ago is noise (tolerance 20%), not recovery
         now = stats(rho=2.0, s_useful=1.0, concurrency=36.0, p_success=0.06, lambda_retry=18.0)
         prev = stats(rho=2.0, s_useful=1.0, concurrency=40.0, p_success=0.05, lambda_retry=20.0)
         self.assertTrue(labeling.check_conditions(now, prev, self.base, self.th)[3])
 
 
 class LabelScenarioTests(unittest.TestCase):
-
     def make_records(self, storm_windows):
         records = []
         for w in range(12):
@@ -165,10 +154,6 @@ class LabelScenarioTests(unittest.TestCase):
                                                   labeling.DEFAULT_THRESHOLDS)
         gw = [r for r in rows if r["source_service"] == "gateway"]
         labels = [r["label"] for r in gw]
-        # the first storm window (6) is not livelock yet: all four conditions
-        # must hold for TAU_LOCK = 2 windows in a row. In the last storm
-        # window (10) the calls in flight are already draining, so C3 is
-        # false and the label switches off.
         self.assertEqual(labels[:7], ["normal"] * 7)
         self.assertEqual(labels[7:10], ["livelock"] * 3)
         self.assertEqual(labels[10:], ["normal", "normal"])
@@ -183,7 +168,6 @@ class LabelScenarioTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
-
     def fresh_state(self):
         state = {}
         for edge in [GW, PAY, INV]:
@@ -199,7 +183,7 @@ class ControllerTests(unittest.TestCase):
         probs, risky, healthy, actions, changed = controller.control_step(
             "reactive", None, state, now_stats, now_stats, 100.0)
         self.assertEqual(actions[PAY], "cut")
-        self.assertEqual(actions[GW], "cut")      # path rule
+        self.assertEqual(actions[GW], "cut")
         self.assertEqual(actions[INV], "hold")
         self.assertEqual(state[PAY]["max_attempts"], 2)
         self.assertEqual(state[PAY]["backoff_multiplier"], 2.0)
@@ -214,11 +198,9 @@ class ControllerTests(unittest.TestCase):
         controller.control_step("reactive", None, state, storm, storm, 102.5)
         self.assertEqual(state[GW]["max_attempts"], 1)
         controller.control_step("reactive", None, state, storm, storm, 105.0)
-        self.assertEqual(state[GW]["max_attempts"], 1)   # never below 1
+        self.assertEqual(state[GW]["max_attempts"], 1)
 
     def test_no_flapping_when_retries_are_off(self):
-        # The Review-2 bug: at max_attempts=1, rho is 0 by definition. The
-        # callee is still failing, so the controller must NOT give retries back.
         state = self.fresh_state()
         state[GW]["max_attempts"] = 1
         state[GW]["last_cut"] = 0.0
@@ -236,15 +218,13 @@ class ControllerTests(unittest.TestCase):
         controller.control_step("reactive", None, state, healthy, healthy, 101.0)
         controller.control_step("reactive", None, state, healthy, healthy, 102.0)
         controller.control_step("reactive", None, state, healthy, healthy, 103.0)
-        self.assertEqual(state[GW]["max_attempts"], 1)   # HOLD_SEC not over yet
+        self.assertEqual(state[GW]["max_attempts"], 1)
         controller.control_step("reactive", None, state, healthy, healthy, 104.0)
-        self.assertEqual(state[GW]["max_attempts"], 2)   # one step only
+        self.assertEqual(state[GW]["max_attempts"], 2)
         controller.control_step("reactive", None, state, healthy, healthy, 105.0)
-        self.assertEqual(state[GW]["max_attempts"], 2)   # needs 3 more healthy ticks
+        self.assertEqual(state[GW]["max_attempts"], 2)
 
     def test_errors_with_spare_capacity_do_not_cut(self):
-        # callee fails 70% of calls with 500 but has free slots: a retry is a
-        # fresh chance to succeed, so the controller leaves retries alone
         state = self.fresh_state()
         errors = {GW: stats(), PAY: stats(rho=1.2, fail_ratio=0.7, overload_ratio=0.0), INV: stats()}
         probs, risky, healthy, actions, changed = controller.control_step(
@@ -275,30 +255,27 @@ class ControllerTests(unittest.TestCase):
                  "baselines": {"gateway->order_service": {"latency_ms": 100, "concurrency": 2, "s_useful": 20},
                                "order_service->payment_service": {"latency_ms": 60, "concurrency": 1, "s_useful": 20},
                                "order_service->inventory_service": {"latency_ms": 60, "concurrency": 1, "s_useful": 20}}}
-        # the model always says "high risk" (intercept 10)
         state = self.fresh_state()
         calm = {GW: stats(rho=0.0), PAY: stats(rho=0.0), INV: stats(rho=0.0)}
         probs, risky, healthy, actions, changed = controller.control_step(
             "predictive", model, state, calm, calm, 10.0)
         self.assertGreater(probs[GW], 0.99)
-        self.assertFalse(risky[GW])        # but nothing is congested: no cut
-        # payment's response time has more than doubled: congestion is starting
+        self.assertFalse(risky[GW])
         slow = {GW: stats(rho=0.0), PAY: stats(rho=0.0, mean_latency_ms=150.0), INV: stats(rho=0.0)}
         probs, risky, healthy, actions, changed = controller.control_step(
             "predictive", model, state, slow, slow, 20.0)
         self.assertTrue(risky[PAY])
-        self.assertTrue(risky[GW])         # rho is still 0 here: this is the pre-emptive cut
+        self.assertTrue(risky[GW])
         self.assertEqual(actions[GW], "cut")
 
     def test_predictive_mode_ignores_fast_errors(self):
-        # payment fails 70% of calls but answers fast and has free slots
         model = {"feature_names": ["fail_ratio"], "mean": [0.0], "std": [1.0], "weights": [20.0],
                  "intercept": 0.0, "threshold": 0.5,
                  "baselines": {"gateway->order_service": {"latency_ms": 150, "concurrency": 2, "s_useful": 20},
                                "order_service->payment_service": {"latency_ms": 60, "concurrency": 1, "s_useful": 20},
                                "order_service->inventory_service": {"latency_ms": 60, "concurrency": 1, "s_useful": 20}}}
         state = self.fresh_state()
-        errors = {GW: stats(rho=0.3, mean_latency_ms=400.0),   # slower only because of back-offs
+        errors = {GW: stats(rho=0.3, mean_latency_ms=400.0),
                   PAY: stats(rho=0.9, fail_ratio=0.7, mean_latency_ms=62.0), INV: stats()}
         probs, risky, healthy, actions, changed = controller.control_step(
             "predictive", model, state, errors, errors, 10.0)
@@ -308,7 +285,6 @@ class ControllerTests(unittest.TestCase):
 
 
 class PolicyFileTests(unittest.TestCase):
-
     def setUp(self):
         self.folder = tempfile.mkdtemp()
         self.old_path = retry_policy.POLICY_PATH
@@ -336,7 +312,7 @@ class PolicyFileTests(unittest.TestCase):
         retry_policy.set_retry_policy("gateway->order_service", 1, 100)
         retry_policy.get_retry_policy("gateway->order_service")
         with open(retry_policy.POLICY_PATH, "w") as f:
-            f.write('{"gateway->order_service": {"max_att')    # half-written file
+            f.write('{"gateway->order_service": {"max_att')
         self.assertEqual(retry_policy.get_retry_policy("gateway->order_service")["max_attempts"], 1)
 
     def test_nonsense_values_are_cleaned(self):
@@ -367,7 +343,6 @@ class FakeResponse(object):
 
 
 class RetryClientTests(unittest.TestCase):
-
     def setUp(self):
         self.logged = []
         self.codes = []
@@ -410,7 +385,7 @@ class RetryClientTests(unittest.TestCase):
         self.assertFalse(retry_client.call_with_retry("gateway", "order_service", "u", "s", "r"))
         self.assertEqual([r["attempt_number"] for r in self.logged], [1, 2, 3])
         self.assertEqual(len(set([r["call_id"] for r in self.logged])), 1)
-        self.assertEqual(self.logged[1]["response_code"], 0)   # timeout recorded as 0
+        self.assertEqual(self.logged[1]["response_code"], 0)
         self.assertEqual(self.logged[2]["backoff_delay_ms"], 0)
 
     def test_stops_on_success(self):
@@ -444,7 +419,6 @@ class RetryClientTests(unittest.TestCase):
 
 
 class TailReaderTests(unittest.TestCase):
-
     def setUp(self):
         self.folder = tempfile.mkdtemp()
         self.old = telemetry.DATA_DIR
@@ -464,9 +438,21 @@ class TailReaderTests(unittest.TestCase):
             f.write(': 3}\n')
         self.assertEqual(telemetry.read_new_call_records(state), [{"a": 3}])
         self.assertEqual(telemetry.read_new_call_records(state), [])
-        with open(path, "w") as f:             # file reset by a new run
+        with open(path, "w") as f:
             f.write('{"a": 4}\n')
         self.assertEqual(telemetry.read_new_call_records(state), [{"a": 4}])
+
+    def test_scenario_filter_skips_other_runs(self):
+        path = os.path.join(self.folder, "user_requests.jsonl")
+        with open(path, "w") as f:
+            f.write(json.dumps({"scenario_id": "a", "n": 1}) + "\n")
+            f.write(json.dumps({"scenario_id": "b", "n": 2}) + "\n")
+            f.write(json.dumps({"scenario_id": None, "n": 3}) + "\n")
+            f.write(json.dumps({"scenario_id": "ab", "n": 4}) + "\n")
+        records, skipped = telemetry.read_jsonl(path, set(["a"]))
+        self.assertEqual([r["n"] for r in records], [1])
+        records, skipped = telemetry.read_jsonl(path)
+        self.assertEqual(len(records), 4)
 
     def test_damaged_lines_are_skipped_and_counted(self):
         path = os.path.join(self.folder, "user_requests.jsonl")
@@ -478,7 +464,6 @@ class TailReaderTests(unittest.TestCase):
 
 
 class ScenarioTests(unittest.TestCase):
-
     def test_gradual_schedule(self):
         args = scenario_runner.parse_args(["--scenario_id", "x", "--mode", "gradual", "--ramp_sec", "10",
                                            "--ramp_steps", "5", "--hold_sec", "6", "--recovery_sec", "8"])
@@ -514,11 +499,10 @@ class ScenarioTests(unittest.TestCase):
 
 
 class MetricTests(unittest.TestCase):
-
     def test_recovery_time(self):
         users = []
         for i in range(30):
-            ok = i >= 12      # everything fails for the first 12 seconds after the fault
+            ok = i >= 12
             users.append({"start_time": 100.0 + i + 0.5, "succeeded": ok})
         seconds, recovered = experiment_arms.recovery_time(users, 100.0, 130.0, 1.0)
         self.assertTrue(recovered)
@@ -537,7 +521,7 @@ class MetricTests(unittest.TestCase):
                              "label_now": 1 if i >= 6 else 0})
         alarms = [0, 0, 0, 1, 1, 1, 1, 1, 1, 1]
         leads, missed = prediction_model.lead_times(examples, alarms)
-        self.assertEqual(leads, [6.0])    # alarm at window 3, livelock from window 6
+        self.assertEqual(leads, [6.0])
         self.assertEqual(missed, 0)
 
     def test_risk_probability_never_overflows(self):
@@ -547,15 +531,14 @@ class MetricTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
-
     def test_confusion_matrix_metrics_by_hand(self):
         y = [1, 1, 0, 0, 1, 0]
-        pred = [1, 0, 0, 1, 1, 0]          # TP 2, FN 1, TN 2, FP 1
+        pred = [1, 0, 0, 1, 1, 0]
         m = evaluate_model.threshold_metrics(y, pred)
         self.assertEqual((m["tp"], m["fp"], m["tn"], m["fn"]), (2, 1, 2, 1))
         self.assertAlmostEqual(m["accuracy"], 4 / 6.0)
         self.assertAlmostEqual(m["specificity"], 2 / 3.0)
-        self.assertAlmostEqual(m["mcc"], (2 * 2 - 1 * 1) / 9.0)     # (TP*TN - FP*FN) / sqrt(3*3*3*3)
+        self.assertAlmostEqual(m["mcc"], (2 * 2 - 1 * 1) / 9.0)
         self.assertAlmostEqual(m["kappa"], 1 / 3.0)
 
     def test_metrics_do_not_crash_when_one_class_is_predicted(self):
@@ -565,11 +548,9 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(m["recall"], 0.0)
 
     def test_calibration_error(self):
-        # always saying 0.5 when half really are positive: perfectly calibrated
         good = evaluate_model.calibration([1, 0, 1, 0], [0.5, 0.5, 0.5, 0.5])
         self.assertAlmostEqual(good["ece"], 0.0)
         self.assertAlmostEqual(good["brier"], 0.25)
-        # always saying 0.9 when half are positive: off by 0.4
         bad = evaluate_model.calibration([1, 0, 1, 0], [0.9, 0.9, 0.9, 0.9])
         self.assertAlmostEqual(bad["ece"], 0.4)
 
@@ -577,18 +558,64 @@ class EvaluationTests(unittest.TestCase):
         rows = []
         for scenario, label in [("a", 1), ("b", 0), ("c", 1), ("d", 0)]:
             for k in range(3):
-                rows.append({"scenario_id": scenario, "y": label, "risk": 0.9 if label else 0.1})
-        low, high, used = evaluate_model.bootstrap(rows, evaluate_model.metric_on("risk", "f1"), rounds=50)
-        self.assertEqual((low, high), (1.0, 1.0))      # perfect scores stay perfect in every resample
-        self.assertTrue(0 < used <= 50)                 # resamples with only one class are skipped
+                rows.append({"scenario_id": scenario, "y": label, "risk": 0.9 if label else 0.1,
+                             "alarm": 1 if label else 0})
+        low, high, used = evaluate_model.bootstrap(rows, evaluate_model.metric_on("risk", "alarm", "f1"), rounds=50)
+        self.assertEqual((low, high), (1.0, 1.0))
+        self.assertTrue(0 < used <= 50)
         picked = evaluate_model.resample_scenarios(evaluate_model.random.Random(1), ["a", "b", "c"])
         self.assertEqual(len(picked), 3)
         for scenario in picked:
             self.assertIn(scenario, ["a", "b", "c"])
 
 
-class CalibrationTests(unittest.TestCase):
+class FeatureTests(unittest.TestCase):
+    def baselines(self):
+        result = {}
+        for edge in [GW, PAY, INV]:
+            result[edge[0] + "->" + edge[1]] = {"latency_ms": 60.0, "concurrency": 1.0, "s_useful": 10.0}
+        return result
 
+    def test_feature_vector_has_every_name(self):
+        values = features.make_features({GW: stats(), PAY: stats(), INV: stats()}, {}, self.baselines())
+        for edge in [GW, PAY, INV]:
+            self.assertEqual(len(features.feature_vector(values[edge])), len(features.FEATURE_NAMES))
+
+    def test_useful_ratio_and_logs(self):
+        now = {GW: stats(s_useful=2.0, concurrency=4.0, mean_latency_ms=600.0), PAY: stats(), INV: stats()}
+        prev = {GW: stats(concurrency=1.0), PAY: stats(), INV: stats()}
+        values = features.make_features(now, prev, self.baselines())[GW]
+        self.assertAlmostEqual(values["useful_ratio"], 0.2)
+        self.assertAlmostEqual(values["d_concurrency_ratio"], 3.0)
+        self.assertAlmostEqual(values["log_latency_ratio"], features.math.log(10.0))
+        self.assertAlmostEqual(values["log_concurrency_ratio"], features.math.log(4.0))
+
+    def test_log_of_zero_is_floored(self):
+        now = {GW: stats(concurrency=0.0), PAY: stats(), INV: stats()}
+        values = features.make_features(now, {}, self.baselines())[GW]
+        self.assertAlmostEqual(values["log_concurrency_ratio"], features.math.log(features.LOG_FLOOR))
+
+    def test_idle_edge_is_neutral(self):
+        now = {GW: stats(), PAY: stats(n_calls=0, s_useful=0.0), INV: stats()}
+        values = features.make_features(now, {}, self.baselines())[PAY]
+        self.assertEqual(values["useful_ratio"], 1.0)
+
+
+class ThresholdTests(unittest.TestCase):
+    def test_best_threshold_maximises_f1(self):
+        y = [0, 0, 0, 1, 1, 1]
+        probs = [0.1, 0.35, 0.62, 0.66, 0.8, 0.9]
+        self.assertEqual(prediction_model.best_threshold(y, probs), 0.65)
+
+    def test_f1_at_threshold(self):
+        self.assertAlmostEqual(prediction_model.f1_at([1, 0, 1], [0.9, 0.9, 0.1], 0.5), 0.5)
+        self.assertEqual(prediction_model.f1_at([1, 1], [0.1, 0.2], 0.5), 0.0)
+
+    def test_alarms_use_each_rows_threshold(self):
+        self.assertEqual(prediction_model.alarms_from([0.6, 0.6], [0.5, 0.7]), [1, 0])
+
+
+class CalibrationTests(unittest.TestCase):
     def test_reads_headerless_tar_gz(self):
         folder = tempfile.mkdtemp()
         try:
@@ -603,10 +630,11 @@ class CalibrationTests(unittest.TestCase):
                 info = tarfile.TarInfo("MSCallGraph_0.csv")
                 info.size = len(data)
                 archive.addfile(info, io.BytesIO(data))
-            downstreams, depths, rts = calibrate_from_trace.read_trace(path, 1000)
-            self.assertEqual(sorted(downstreams.keys()), ["svcA", "svcB"])   # db call filtered out
+            with contextlib.redirect_stdout(io.StringIO()):
+                downstreams, depths, rts = calibrate_from_trace.read_trace(path, 1000)
+            self.assertEqual(sorted(downstreams.keys()), ["svcA", "svcB"])
             self.assertEqual(len(rts), 100)
-            self.assertTrue(min(rts) > 0)     # negative (callee-side) values made positive
+            self.assertTrue(min(rts) > 0)
         finally:
             shutil.rmtree(folder)
 

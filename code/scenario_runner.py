@@ -10,18 +10,6 @@ from common.config import GATEWAY_URL, USER_TIMEOUT_SEC, DEFAULT_SERVICE_CONFIGS
 from common.fault_injection import write_config, reset_all_configs
 from common.telemetry import log_user_request, log_scenario, wait_seconds_until, read_scenarios
 
-# Runs one experiment scenario against the live services:
-#
-#   normal traffic -> fault (sudden, or ramping up in steps) -> fault removed
-#
-# Traffic is OPEN-LOOP: users keep arriving at the same rate no matter how
-# slow the system gets, exactly like real users. (A closed loop, where the
-# next request waits for the previous one, would slow itself down and hide
-# the storm.) Arrivals are random (Poisson) by default, like real traffic.
-#
-# The traffic never pauses between phases. An earlier version waited for
-# all requests of one phase to finish before starting the next, which gave
-# the system a free breather exactly when the fault was removed.
 
 LEGACY_MODES = {
     "failure_storm": ("spike", "error"),
@@ -35,7 +23,6 @@ outstanding_lock = threading.Lock()
 
 
 def fault_config(target, fault, severity, peak_latency_ms, peak_failure_rate):
-    # severity 0 = healthy, 1 = full fault
     normal = DEFAULT_SERVICE_CONFIGS[target]
     config = {}
     if fault == "latency":
@@ -101,11 +88,9 @@ def traffic_loop(scenario_id, rps, arrivals, seed, end_time, stop_flag):
 
 
 def build_schedule(args):
-    # list of (phase name, duration, severity at start of this step)
     steps = [("normal", args.normal_sec, 0.0)]
 
     if args.mode == "none":
-        # control run: healthy traffic only, no fault at all
         steps.append(("normal", args.hold_sec + args.recovery_sec, 0.0))
         return steps
 
@@ -124,7 +109,6 @@ def build_schedule(args):
 
 
 def merge_phases(step_log):
-    # consecutive ramp steps become one "ramp" phase
     phases = []
     for name, start, end in step_log:
         if len(phases) > 0 and phases[-1]["name"] == name:
@@ -180,7 +164,6 @@ def parse_args(argv=None):
     parser.add_argument("--queue_wait", type=float, default=1.0,
                         help="how long order_service lets a request wait for a slot (sec)")
     parser.add_argument("--quiet", action="store_true")
-    # old option names, kept so the Review-2 commands still work
     parser.add_argument("--spike_sec", type=float, default=None)
     parser.add_argument("--storm_sec", type=float, default=None)
     parser.add_argument("--after_sec", type=float, default=None)
@@ -258,7 +241,6 @@ def run_scenario(args):
         stop_flag["stop"] = True
         step_log.append((current_phase["name"], step_start, time.time()))
     finally:
-        # whatever happened, never leave the system in a faulty state
         apply_system_settings(1.0)
 
     phases = merge_phases(step_log)
@@ -290,8 +272,6 @@ def run_scenario(args):
     log_scenario(manifest)
 
     if interrupted:
-        # the fault is removed and the run is recorded as interrupted; now
-        # stop whoever called us too (a dataset batch, an experiment...)
         raise KeyboardInterrupt
 
     say("done: %d user requests sent. Logs are in the data/ folder." % n_requests)
@@ -334,8 +314,6 @@ def main():
         print("error: the gateway is not answering. Start the services first:  python run_all.py")
         sys.exit(1)
 
-    # leftover work from a previous run (orphans still in a long queue)
-    # must not leak into this one: wait until every service is idle
     from run_all import wait_until_idle
     if not wait_until_idle(timeout_sec=2):
         print("waiting for the previous run's leftover requests to finish...")

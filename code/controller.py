@@ -11,44 +11,9 @@ from common.config import (EDGES, PARENT_EDGE, CHILD_EDGES, RESULTS_DIR, edge_na
 from common.retry_policy import read_policy_file, write_policy_file, get_retry_policy
 from common.telemetry import make_tail_state, read_new_call_records, log_controller_decision
 from features import (live_window_stats, split_by_edge, make_features, risk_probability,
-                      reactive_alarm, WINDOW_SEC)
+                      reactive_alarm, WINDOW_SEC, ALARM_RHO)
+from common.plots import plt, save_figure, BLUE, RED, GREEN, GREY
 
-# Module 7: the retry-budget controller.
-#
-# Every second, for every edge, it measures the last 2 seconds of calls and
-# decides whether to CUT the retry budget, HOLD it, or RESTORE it.
-#
-# It works like TCP congestion control, with "overload" (503 busy replies
-# and timeouts) as the congestion signal:
-#
-# When to cut (two modes):
-#   reactive    a storm is happening right now: rho > 1 (more retries than
-#               fresh calls) AND the callee is overloaded (>20% of calls
-#               get 503 or time out)
-#   predictive  the model says livelock is likely within the next ~10s AND
-#               congestion is starting below this edge (the callee's response
-#               time has at least doubled, or >=10% overload), OR the reactive
-#               rule fires (kept as a safety net). The congestion gate matters:
-#               without it the model also cut retries during pure error bursts,
-#               where the callee fails fast and has free slots, so a retry is
-#               a useful second chance (see README, "lessons").
-#
-# How to cut: max_attempts - 1 (never below 1) and backoff x2 (at most x4).
-# Path rule: retries multiply down a call chain (3 x 3 = 9 calls), so when
-# an edge is cut, the edge ABOVE it on the path is cut too.
-#
-# When to restore: NOT when rho is low. Once max_attempts is 1, rho is 0 by
-# definition (no retries are allowed), so "rho is low, give retries back"
-# undoes the cut while the callee is still drowning -> on/off flapping.
-# (The Review-2 controller had exactly this bug.) Instead we restore when
-# the edge has been free of overload for RESTORE_TICKS checks in a row, and
-# at least HOLD_SEC after the last cut -- one step at a time. Overload is
-# measured on fresh calls too, so it is honest even with retries off.
-#
-# Errors without overload (the callee says 500 but has free slots) do not
-# block a restore: then a retry is a fresh chance to succeed and costs
-# capacity nobody else needs. Cut fast on congestion, give back slowly when
-# it clears -- the same shape as TCP's AIMD.
 
 CONTROL_INTERVAL_SEC = 1.0
 
@@ -93,11 +58,6 @@ def starting_state():
 
 
 def congestion_starting(edge, values):
-    # Is the callee side of this edge filling up? Overload (503s/timeouts)
-    # on this edge or below it, or the callee's response time at least
-    # doubled. For an edge whose callee calls others (gateway->order), we
-    # look at the edges below it: order_service's own response time also
-    # contains its retry back-off sleeps, which is not congestion.
     if values["overload_ratio"] >= CONGESTION_OVERLOAD:
         return True
     if values["down_max_overload"] >= CONGESTION_OVERLOAD:
@@ -118,7 +78,6 @@ def decide_risky(mode, edge, stats, prob, values, model):
 
 
 def looks_healthy(stats):
-    # "no congestion": almost no 503s or timeouts on this edge
     if stats["n_calls"] < MIN_CALLS:
         return False
     return stats["overload_ratio"] < OVERLOAD_OK
@@ -150,7 +109,6 @@ def restore(state):
 
 
 def control_step(mode, model, state_by_edge, stats_now, stats_prev, now):
-    # one decision round. Kept separate from the loop so it can be unit tested.
     probs = {}
     values_by_edge = {}
     if mode == "predictive":
@@ -220,10 +178,69 @@ def write_policy(state_by_edge):
     return write_policy_file(policy)
 
 
+def print_summary(history, restored):
+    print("")
+    header = "%-14s %6s %9s %14s %10s" % ("Edge", "Cuts", "Restores", "Min attempts", "First cut")
+    print(header)
+    print("-" * len(header))
+    for edge in EDGES:
+        rows = [h for h in history if h["edge"] == edge]
+        cuts = [h for h in rows if h["action"] == "cut"]
+        restores = [h for h in rows if h["action"] == "restore"]
+        lowest = "-"
+        if len(rows) > 0:
+            lowest = str(min([h["attempts"] for h in rows]))
+        first = "-"
+        if len(cuts) > 0:
+            first = "t=%.0fs" % cuts[0]["t"]
+        print("%-14s %6d %9d %14s %10s" % (short_name(edge), len(cuts), len(restores), lowest, first))
+    if restored:
+        print("Retry policy restored to the original.")
+
+
 def short_name(edge):
     names = {"gateway": "gw", "order_service": "order", "payment_service": "pay",
              "inventory_service": "inv"}
     return names[edge[0]] + "->" + names[edge[1]]
+
+
+def draw(history, mode, threshold, name, show):
+    fig, axes = plt.subplots(3, 1, figsize=(9, 7.5), sharex=True)
+    colours = [BLUE, RED, GREEN]
+    for k in range(len(EDGES)):
+        edge = EDGES[k]
+        rows = [h for h in history if h["edge"] == edge]
+        if len(rows) == 0:
+            continue
+        xs = [h["t"] for h in rows]
+        label = short_name(edge)
+        axes[0].step(xs, [h["attempts"] for h in rows], where="post", color=colours[k], label=label)
+        cuts = [h for h in rows if h["action"] == "cut"]
+        restores = [h for h in rows if h["action"] == "restore"]
+        axes[0].plot([h["t"] for h in cuts], [h["attempts"] for h in cuts], "v", color=colours[k], markersize=8)
+        axes[0].plot([h["t"] for h in restores], [h["attempts"] for h in restores], "^", color=colours[k],
+                     markersize=8)
+        axes[1].plot(xs, [h["rho"] for h in rows], color=colours[k], label=label)
+        risk_rows = [h for h in rows if h["risk"] is not None]
+        axes[2].plot([h["t"] for h in risk_rows], [h["risk"] for h in risk_rows], color=colours[k], label=label)
+    axes[0].set_yticks([1, 2, 3])
+    axes[0].set_ylim(0.6, 3.4)
+    axes[0].set_ylabel("Max attempts")
+    axes[0].set_title("(a) Retry budget per edge (down = cut, up = restore)")
+    axes[0].legend(loc="center right", ncol=3)
+    axes[1].axhline(ALARM_RHO, color=GREY, linestyle="--", linewidth=1)
+    axes[1].set_ylabel("rho")
+    axes[1].set_title("(b) Retry amplification")
+    if mode == "predictive":
+        axes[2].axhline(threshold, color=GREY, linestyle="--", linewidth=1)
+        axes[2].set_ylim(-0.05, 1.05)
+        axes[2].set_title("(c) Predicted livelock risk (dashed: threshold %.2f)" % threshold)
+    else:
+        axes[2].set_title("(c) Predicted livelock risk (not used in reactive mode)")
+    axes[2].set_ylabel("Risk p")
+    axes[2].set_xlabel("Time since controller start (s)")
+    fig.tight_layout()
+    return save_figure(fig, name, show)
 
 
 def main():
@@ -231,29 +248,34 @@ def main():
     parser.add_argument("--mode", type=str, default="reactive", choices=["reactive", "predictive"])
     parser.add_argument("--duration_sec", type=float, default=60)
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL_PATH)
-    parser.add_argument("--tag", type=str, default="manual",
-                        help="label written into controller_log.jsonl (usually the scenario id)")
-    parser.add_argument("--keep_policy", action="store_true",
-                        help="do not put the original retry policy back when stopping")
+    parser.add_argument("--tag", type=str, default="manual")
+    parser.add_argument("--keep_policy", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--no_show", action="store_true")
     args = parser.parse_args()
 
     model = None
     if args.mode == "predictive":
         model = load_model(args.model)
         if model is None:
-            print("error: predictive mode needs a trained model at %s" % args.model)
-            print("run prediction_model.py first, or use --mode reactive")
+            print("error: no model at %s, run prediction_model.py first" % args.model)
             sys.exit(1)
 
     original_policy = read_policy_file()
     state_by_edge = starting_state()
     tail = make_tail_state(start_at_end=True)
     recent = []
+    history = []
+    threshold = None
+    if model is not None:
+        threshold = model["threshold"]
 
     if not args.quiet:
-        print("controller (%s) running for %.0f sec, checking every %.1f sec"
-              % (args.mode, args.duration_sec, CONTROL_INTERVAL_SEC))
+        line = "CONTROLLER  |  mode %s  |  %.0f s  |  every %.0f s" % (args.mode, args.duration_sec,
+                                                                      CONTROL_INTERVAL_SEC)
+        if threshold is not None:
+            line = line + "  |  risk threshold %.2f" % threshold
+        print(line)
 
     start = time.time()
     end_time = start + args.duration_sec
@@ -306,6 +328,8 @@ def main():
                     "max_attempts": state["max_attempts"],
                     "backoff_base_ms": int(state["backoff_base_ms"] * state["backoff_multiplier"]),
                 })
+                history.append({"t": now - start, "edge": edge, "attempts": state["max_attempts"],
+                                "rho": stats["rho"], "risk": probs[edge], "action": actions[edge]})
                 risk_text = ""
                 if probs[edge] is not None:
                     risk_text = " risk %.2f" % probs[edge]
@@ -322,10 +346,14 @@ def main():
         pass
     finally:
         if not args.keep_policy:
-            # never leave the services stuck with retries switched off
             write_policy_file(original_policy)
         if not args.quiet:
-            print("controller stopped%s." % ("" if args.keep_policy else ", original retry policy restored"))
+            print_summary(history, not args.keep_policy)
+            if len(history) > 0:
+                name = args.tag
+                if name == "manual":
+                    name = args.mode
+                draw(history, args.mode, threshold, "controller_%s.png" % name, not args.no_show)
 
 
 if __name__ == "__main__":

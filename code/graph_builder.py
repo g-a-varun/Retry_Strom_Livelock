@@ -8,32 +8,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import networkx as nx
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
-from common.config import (DATA_DIR, RESULTS_DIR, FIGURES_DIR, EDGES, NODES, PARENT_EDGE,
+from common.config import (CODE_DIR, DATA_DIR, RESULTS_DIR, EDGES, NODES, PARENT_EDGE,
                            CHILD_EDGES, edge_name, make_dirs)
+from common.plots import plt, save_figure, BLUE, ORANGE, RED, GREY
 from features import make_features, risk_probability
 
-# Module 5: the time-varying service graph.
-#
-# One directed graph per 2-second window: nodes are services, edges are
-# caller->callee links, and every edge carries that window's numbers
-# (rho, useful throughput, concurrency, livelock label, predicted risk).
-#
-# The graph is not just a picture. features.py does one round of
-# "message passing" over it: every edge also gets the worst values of the
-# edges directly below it, and the values of the edge directly above it.
-# That is the core idea of a graph neural network (a node/edge learns from
-# its neighbours), done by hand. prediction_model.py measures whether it
-# helps (the "without graph features" ablation).
 
 LABELED_PATH = os.path.join(DATA_DIR, "labeled_windows.csv")
 SNAPSHOT_PATH = os.path.join(DATA_DIR, "graph_snapshots.pkl")
 OOF_PATH = os.path.join(RESULTS_DIR, "prediction_oof.csv")
 MODEL_PATH = os.path.join(RESULTS_DIR, "model.json")
-FIGURE_PATH = os.path.join(FIGURES_DIR, "graph_snapshots.png")
 
 NODE_POSITIONS = {
     "gateway": (0.0, 0.0),
@@ -58,8 +43,6 @@ def load_rows(path):
 
 
 def load_oof_risk():
-    # out-of-fold risk: each window scored by a model that never saw its
-    # scenario, so the picture shows an honest prediction
     risk = {}
     if not os.path.exists(OOF_PATH):
         return risk
@@ -138,41 +121,41 @@ def build_snapshots(rows, oof_risk, model):
     return snapshots
 
 
-def edge_colour(data):
+def edge_colour(data, threshold):
     if data["livelock"]:
-        return "#c0392b"
-    if data["risk"] is not None and data["risk"] >= 0.5:
-        return "#e67e22"
-    return "#95a5a6"
+        return RED
+    if data["risk"] is not None and data["risk"] >= threshold:
+        return ORANGE
+    return GREY
 
 
-def draw(ax, snapshot, title):
+def draw(ax, snapshot, title, threshold):
     graph = snapshot["graph"]
     colours = []
     widths = []
     labels = {}
     for u, v, d in graph.edges(data=True):
-        colours.append(edge_colour(d))
+        colours.append(edge_colour(d, threshold))
         widths.append(2.0 + min(d["rho"], 4.0))
         text = "rho %.2f" % d["rho"]
         if d["risk"] is not None:
             text = text + "\nrisk %.2f" % d["risk"]
         labels[(u, v)] = text
 
-    nx.draw_networkx_nodes(graph, NODE_POSITIONS, ax=ax, node_size=2600, node_color="#34495e")
+    nx.draw_networkx_nodes(graph, NODE_POSITIONS, ax=ax, node_size=2600, node_color=BLUE)
     short = {"gateway": "gateway", "order_service": "order", "payment_service": "payment",
              "inventory_service": "inventory"}
-    nx.draw_networkx_labels(graph, NODE_POSITIONS, labels=short, ax=ax, font_color="white", font_size=8)
+    nx.draw_networkx_labels(graph, NODE_POSITIONS, labels=short, ax=ax, font_color="white", font_size=9)
     nx.draw_networkx_edges(graph, NODE_POSITIONS, ax=ax, edge_color=colours, width=widths,
                            arrowsize=18, node_size=2600)
-    nx.draw_networkx_edge_labels(graph, NODE_POSITIONS, edge_labels=labels, ax=ax, font_size=7)
-    ax.set_title(title, fontsize=10)
+    nx.draw_networkx_edge_labels(graph, NODE_POSITIONS, edge_labels=labels, ax=ax, font_size=8)
+    ax.set_title(title)
     ax.set_xlim(-0.4, 2.4)
     ax.set_ylim(-0.95, 0.95)
     ax.axis("off")
 
 
-def pick_three(snaps):
+def pick_three(snaps, threshold=0.5):
     healthy = None
     warning = None
     livelock = None
@@ -183,20 +166,18 @@ def pick_three(snaps):
         for u, v, d in snap["graph"].edges(data=True):
             if d["livelock"]:
                 any_livelock = True
-            if d["risk"] is not None and d["risk"] >= 0.5:
+            if d["risk"] is not None and d["risk"] >= threshold:
                 any_risk = True
         if healthy is None and snap["phase"] == "normal" and not any_risk and not any_livelock:
             healthy = snap
         if livelock is None and any_livelock:
             livelock = snap
-            # the early warning = the earliest window before this one where
-            # the risk was already high but no edge was in livelock yet
             for j in range(i):
                 earlier = snaps[j]
                 warned = False
                 locked = False
                 for u, v, d in earlier["graph"].edges(data=True):
-                    if d["risk"] is not None and d["risk"] >= 0.5:
+                    if d["risk"] is not None and d["risk"] >= threshold:
                         warned = True
                     if d["livelock"]:
                         locked = True
@@ -211,8 +192,8 @@ def pick_three(snaps):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--labels", type=str, default=LABELED_PATH)
-    parser.add_argument("--scenario", type=str, default=None,
-                        help="scenario to draw (default: the one with the most livelock windows)")
+    parser.add_argument("--scenario", type=str, default=None)
+    parser.add_argument("--no_show", action="store_true")
     args = parser.parse_args()
     make_dirs()
 
@@ -227,25 +208,32 @@ def main():
 
     rows = load_rows(args.labels)
     snapshots = build_snapshots(rows, load_oof_risk(), model)
+    threshold = 0.5
+    if model is not None:
+        threshold = model["threshold"]
     total = 0
     for scenario_id in snapshots:
         total = total + len(snapshots[scenario_id])
     with open(SNAPSHOT_PATH, "wb") as f:
         pickle.dump(snapshots, f)
-    print("built %d graph snapshots for %d scenarios, saved to %s" % (total, len(snapshots), SNAPSHOT_PATH))
 
+    print("SERVICE GRAPH  |  %d runs  |  %d snapshots (one per 2 s window)  |  %s"
+          % (len(snapshots), total, os.path.relpath(SNAPSHOT_PATH, CODE_DIR)))
     print("")
-    print("message-passing neighbours used by the model (features.py):")
+    print("Table 1. Message passing used by the model")
+    header = "%-20s %-36s %s" % ("Edge", "Edges below", "Edge above")
+    print(header)
+    print("-" * len(header))
     for edge in EDGES:
-        below = [edge_name(e) for e in CHILD_EDGES[edge]]
+        below = [short(e) for e in CHILD_EDGES[edge]]
         above = PARENT_EDGE[edge]
-        print("  %-36s below: %-60s above: %s" % (edge_name(edge), ", ".join(below) if below else "-",
-                                                 edge_name(above) if above else "-"))
+        print("%-20s %-36s %s" % (short(edge), ", ".join(below) if below else "-",
+                                  short(above) if above else "-"))
 
     scenario_id = args.scenario
     if scenario_id is None:
         best = -1
-        for sid in snapshots:
+        for sid in sorted(snapshots):
             count = 0
             for snap in snapshots[sid]:
                 for u, v, d in snap["graph"].edges(data=True):
@@ -255,38 +243,45 @@ def main():
                 best = count
                 scenario_id = sid
     if scenario_id not in snapshots:
-        print("error: scenario %s not found" % scenario_id)
+        print("error: run %s not found" % scenario_id)
         sys.exit(1)
 
-    healthy, warning, livelock = pick_three(snapshots[scenario_id])
+    healthy, warning, livelock = pick_three(snapshots[scenario_id], threshold)
     if livelock is None:
-        print("\nscenario %s has no livelock window, nothing to draw." % scenario_id)
+        print("run %s has no livelock window" % scenario_id)
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
-    panels = [(healthy, "healthy"), (warning, "early warning"), (livelock, "livelock")]
+    panels = [(healthy, "Healthy"), (warning, "Early warning"), (livelock, "Livelock")]
+    print("")
+    print("Table 2. Snapshots of %s (risk threshold %.2f)" % (scenario_id, threshold))
+    header = "%-14s %6s %-9s %-18s %6s %6s %9s" % ("Snapshot", "t (s)", "Phase", "Edge", "rho", "Risk", "Livelock")
+    print(header)
+    print("-" * len(header))
+    for snap, name in panels:
+        if snap is None:
+            continue
+        for u, v, d in snap["graph"].edges(data=True):
+            risk = "-" if d["risk"] is None else "%.2f" % d["risk"]
+            print("%-14s %6.1f %-9s %-18s %6.2f %6s %9s" % (name, snap["t_rel"], snap["phase"], short((u, v)),
+                                                          d["rho"], risk, "yes" if d["livelock"] else "no"))
+            name = ""
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.4))
     for k in range(3):
         snap, name = panels[k]
         if snap is None:
             axes[k].axis("off")
             continue
-        draw(axes[k], snap, "%s  (t = %.0fs, phase: %s)" % (name, snap["t_rel"], snap["phase"]))
-    fig.suptitle("Scenario %s -- grey: normal, orange: predicted risk >= 0.5, red: livelock (4 conditions hold)"
-                 % scenario_id, fontsize=11)
+        draw(axes[k], snap, "(%s) %s, t = %.0f s" % ("abc"[k], name, snap["t_rel"]), threshold)
+    fig.suptitle("%s: grey = normal, orange = risk >= %.2f, red = livelock" % (scenario_id, threshold),
+                 fontsize=11, x=0.02, ha="left")
     fig.tight_layout()
-    fig.savefig(FIGURE_PATH, dpi=150)
-    plt.close(fig)
-
     print("")
-    print("scenario %s:" % scenario_id)
-    for snap, name in panels:
-        if snap is None:
-            continue
-        print("  %-14s t=%5.1fs  phase=%s" % (name, snap["t_rel"], snap["phase"]))
-        for u, v, d in snap["graph"].edges(data=True):
-            risk = "-" if d["risk"] is None else "%.2f" % d["risk"]
-            print("     %-18s -> %-18s rho=%5.2f  risk=%s  livelock=%s" % (u, v, d["rho"], risk, d["livelock"]))
-    print("saved the picture to %s" % FIGURE_PATH)
+    save_figure(fig, "graph_snapshots.png", not args.no_show)
+
+
+def short(edge):
+    return edge_name(edge).replace("_service", "")
 
 
 if __name__ == "__main__":

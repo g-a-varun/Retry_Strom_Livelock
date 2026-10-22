@@ -1,13 +1,11 @@
-Livelock detection -- group 'dataset'
-=====================================
-scenarios: 28   windows (edge x 2s): 1878   labelled livelock: 131
+LIVELOCK DETECTION  |  group dataset  |  28 runs  |  1878 windows (edge x 2 s)  |  131 livelock
 
-livelock windows by edge and phase (livelock / total)
-  edge                                        normal          ramp         fault      recovery
-  gateway->order_service                     0 / 212        8 / 93      46 / 104      63 / 209
-  order_service->payment_service             0 / 212        0 / 93       1 / 104       0 / 209
-  order_service->inventory_service           0 / 212        1 / 93       9 / 104       0 / 209
+Table 1. Livelock windows / windows, by edge and phase
+Edge                     Normal       Ramp      Fault   Recovery
+----------------------------------------------------------------
+gateway->order            0/212       8/93     46/104     63/209
+order->payment            0/212       0/93      1/104      0/209
+order->inventory          0/212       1/93      9/104      0/209
 
-false alarms during healthy traffic (normal phase): 0 of 636 windows
-users who arrived in a window flagged livelock on any edge got a success 9.0% of the time
-users who arrived in any other fault/recovery window got a success 68.1% of the time
+False alarms (normal phase): 0/636 windows
+User success: livelock windows 9.0%  |  other ramp/fault/recovery windows 68.1%

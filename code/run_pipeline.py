@@ -12,28 +12,6 @@ from common.telemetry import reset_logs
 from run_all import start_services, stop_services, port_in_use
 from common.config import SERVICE_PORTS
 
-# Runs the WHOLE project from scratch with one command, in order:
-#
-#   1. start the 4 services
-#   2. generate the dataset (randomised scenarios)          generate_dataset.py
-#   3. label every window with the 4 livelock conditions   labeling.py
-#   4. train + evaluate the prediction model               prediction_model.py
-#   5. full model evaluation (MCC, ROC-AUC, calibration,
-#      confidence intervals, run-time cost)                evaluate_model.py
-#   6. build the service graph snapshots                   graph_builder.py
-#   7. run the 5-strategy experiments                      experiment_arms.py
-#   8. label the experiment runs too                       labeling.py --group experiment
-#   9. check the data against queueing theory etc.         validate_data.py
-#  10. draw all figures                                    make_figures.py
-#  11. collect every number into results/RESULTS.md
-#
-#   python run_pipeline.py            full run (about 1.5 hours)
-#   python run_pipeline.py --quick    small run for a demo (about 20 minutes)
-#
-# The previous results/ and data/ are copied to results_previous/ and
-# data_previous/ first, so a quick demo run never destroys the full run.
-#
-# Every step writes its full output to results/logs/<step>.log.
 
 LOG_DIR = os.path.join(RESULTS_DIR, "logs")
 
@@ -54,7 +32,6 @@ def run_step(number, title, script_args):
 
 
 def back_up_previous():
-    # never silently destroy an earlier full run: keep one backup copy
     if os.path.exists(os.path.join(RESULTS_DIR, "RESULTS.md")):
         backup = os.path.join(CODE_DIR, "results_previous")
         if os.path.exists(backup):
@@ -187,13 +164,14 @@ def main():
         steps = [
             ("generate the dataset", ["generate_dataset.py", "--n_scenarios", str(n_scenarios),
                                       "--seed", str(args.seed)]),
-            ("label it with the 4 livelock conditions", ["labeling.py", "--group", "dataset", "--sensitivity"]),
-            ("train and evaluate the prediction model", ["prediction_model.py"]),
-            ("evaluate the model in full (all metrics, cost)", ["evaluate_model.py"]),
-            ("build the time-varying service graph", ["graph_builder.py"]),
+            ("label it with the 4 livelock conditions", ["labeling.py", "--group", "dataset", "--sensitivity",
+                                                         "--no_show"]),
+            ("train and evaluate the prediction model", ["prediction_model.py", "--no_show"]),
+            ("evaluate the model in full (all metrics, cost)", ["evaluate_model.py", "--no_show"]),
+            ("build the time-varying service graph", ["graph_builder.py", "--no_show"]),
             ("run the five-strategy experiments", ["experiment_arms.py", "--reps", str(reps),
-                                                   "--experiments", experiments]),
-            ("label the experiment runs", ["labeling.py", "--group", "experiment"]),
+                                                   "--experiments", experiments, "--no_show"]),
+            ("label the experiment runs", ["labeling.py", "--group", "experiment", "--no_show"]),
             ("validate the data", ["validate_data.py"]),
             ("draw the figures", ["make_figures.py"]),
         ]

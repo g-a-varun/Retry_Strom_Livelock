@@ -7,27 +7,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from common.config import DATA_DIR, RESULTS_DIR, EDGES, edge_name, make_dirs
+from common.config import CODE_DIR, DATA_DIR, RESULTS_DIR, EDGES, edge_name, make_dirs
 from common.telemetry import read_call_records, read_user_records, read_scenarios, within_run
 from features import window_stats_for_edge, split_by_edge, WINDOW_SEC
+from common.plots import (plt, save_figure, fault_span, BLUE, ORANGE, GREEN, RED, PURPLE, GREY,
+                          LIVELOCK_SHADE)
 
-# Module 4: livelock detection. Applies the four formal conditions to every
-# 2-second window of every edge of every scenario, and writes the result
-# (one row per edge per window) to data/labeled_windows.csv.
-#
-# A window is LIVELOCK when all four hold, for TAU_LOCK windows in a row:
-#   C1 retry amplification is high      rho > RHO_CRIT
-#   C2 useful throughput has collapsed  s_useful < BETA x healthy s_useful
-#   C3 work in flight is not draining   concurrency > C_FACTOR x healthy,
-#                                       and not falling compared to 4s ago
-#   C4 the retry loop is not damping    retries not falling AND success
-#                                       not improving, compared to 4s ago
-#
-# "healthy" = this edge's own level during the first WARMUP_SEC of the same
-# scenario (every scenario starts with normal traffic), so the conditions
-# are relative and work for edges with very different traffic levels.
-# The trend tests allow TREND_TOL of noise: a flat, stuck storm counts as
-# "not falling"; only a clear improvement counts as recovering.
 
 WARMUP_SEC = 8.0
 MIN_CALLS = 4
@@ -78,7 +63,6 @@ def phase_at(manifest, t):
 
 
 def edge_baseline(stats_list, manifest):
-    # median over the warm-up windows (the first seconds of normal traffic)
     warmup_sec = min(WARMUP_SEC, manifest["normal_sec"])
     n_warmup = int(warmup_sec // WINDOW_SEC)
 
@@ -127,7 +111,6 @@ def check_conditions(curr, trend, baseline, th):
 
 
 def user_windows(user_records, t0, n_windows):
-    # per window: how many users ARRIVED, and what fraction of them got a success
     counts = []
     for i in range(n_windows):
         counts.append([0, 0])
@@ -155,7 +138,6 @@ def label_scenario(manifest, call_records, user_records, th):
         stats_list = window_stats_for_edge(by_edge[edge], t0, n_windows)
         baseline = edge_baseline(stats_list, manifest)
         if baseline is None:
-            # no healthy traffic on this edge at the start: cannot judge it
             continue
         baselines[edge] = baseline
 
@@ -243,8 +225,6 @@ def label_all(manifests, th, call_by_scenario, user_by_scenario):
 
 
 def global_baselines(all_baselines):
-    # one healthy level per edge across all scenarios (median), saved for
-    # the prediction model and the live controller
     result = {}
     for edge in EDGES:
         latency = []
@@ -279,88 +259,98 @@ def write_rows(path, rows):
             writer.writerow(row)
 
 
-def summarize(rows, title):
-    lines = []
-    lines.append(title)
-    lines.append("=" * len(title))
+PHASES = ["normal", "ramp", "fault", "recovery"]
 
-    scenarios = set()
+
+def short_edge(edge):
+    return edge_name(edge).replace("_service", "")
+
+
+def count_by_edge_phase(rows):
+    table = {}
+    for edge in EDGES:
+        table[edge] = {}
+        for phase in PHASES:
+            table[edge][phase] = [0, 0]
     for row in rows:
-        scenarios.add(row["scenario_id"])
-    n_livelock = 0
+        edge = (row["source_service"], row["dest_service"])
+        if edge in table and row["phase"] in table[edge]:
+            cell = table[edge][row["phase"]]
+            cell[0] = cell[0] + 1
+            if row["label"] == "livelock":
+                cell[1] = cell[1] + 1
+    return table
+
+
+def user_success_split(rows):
+    flagged = {}
     for row in rows:
         if row["label"] == "livelock":
-            n_livelock = n_livelock + 1
-    lines.append("scenarios: %d   windows (edge x 2s): %d   labelled livelock: %d"
-                 % (len(scenarios), len(rows), n_livelock))
-    lines.append("")
+            flagged[(row["scenario_id"], row["window_index"])] = True
+    flagged_rates = []
+    other_rates = []
+    seen = set()
+    for row in rows:
+        if row["phase"] not in ("ramp", "fault", "recovery") or row["user_success_rate"] == "":
+            continue
+        key = (row["scenario_id"], row["window_index"])
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in flagged:
+            flagged_rates.append(float(row["user_success_rate"]))
+        else:
+            other_rates.append(float(row["user_success_rate"]))
+    flagged_mean = None
+    other_mean = None
+    if len(flagged_rates) > 0:
+        flagged_mean = 100.0 * sum(flagged_rates) / len(flagged_rates)
+    if len(other_rates) > 0:
+        other_mean = 100.0 * sum(other_rates) / len(other_rates)
+    return flagged_mean, other_mean
 
-    lines.append("livelock windows by edge and phase (livelock / total)")
-    phases = ["normal", "ramp", "fault", "recovery"]
-    header = "  %-36s" % "edge"
-    for phase in phases:
-        header = header + " %13s" % phase
+
+def summarize(rows, group):
+    scenarios = set()
+    n_livelock = 0
+    for row in rows:
+        scenarios.add(row["scenario_id"])
+        if row["label"] == "livelock":
+            n_livelock = n_livelock + 1
+
+    lines = []
+    lines.append("LIVELOCK DETECTION  |  group %s  |  %d runs  |  %d windows (edge x 2 s)  |  %d livelock"
+                 % (group, len(scenarios), len(rows), n_livelock))
+    lines.append("")
+    lines.append("Table 1. Livelock windows / windows, by edge and phase")
+    header = "%-20s" % "Edge"
+    for phase in PHASES:
+        header = header + " %10s" % phase.capitalize()
     lines.append(header)
+    lines.append("-" * len(header))
+    table = count_by_edge_phase(rows)
     for edge in EDGES:
-        line = "  %-36s" % edge_name(edge)
-        for phase in phases:
-            total = 0
-            flagged = 0
-            for row in rows:
-                if (row["source_service"], row["dest_service"]) == edge and row["phase"] == phase:
-                    total = total + 1
-                    if row["label"] == "livelock":
-                        flagged = flagged + 1
-            line = line + " %13s" % ("%d / %d" % (flagged, total))
+        line = "%-20s" % short_edge(edge)
+        for phase in PHASES:
+            cell = table[edge][phase]
+            line = line + " %10s" % ("%d/%d" % (cell[1], cell[0]))
         lines.append(line)
     lines.append("")
 
     normal_total = 0
     normal_flagged = 0
-    for row in rows:
-        if row["phase"] == "normal":
-            normal_total = normal_total + 1
-            if row["label"] == "livelock":
-                normal_flagged = normal_flagged + 1
-    lines.append("false alarms during healthy traffic (normal phase): %d of %d windows"
-                 % (normal_flagged, normal_total))
-
-    # do the flagged windows really look like "busy but no progress"?
-    # compare what USERS experienced in flagged vs unflagged windows,
-    # only looking at fault/recovery time so the comparison is fair
-    flagged_success = []
-    other_success = []
-    flagged_seen = set()
-    other_seen = set()
-    for row in rows:
-        if row["phase"] not in ("ramp", "fault", "recovery"):
-            continue
-        if row["user_success_rate"] == "":
-            continue
-        key = (row["scenario_id"], row["window_index"])
-        if row["label"] == "livelock":
-            if key not in flagged_seen:
-                flagged_seen.add(key)
-                flagged_success.append(float(row["user_success_rate"]))
-    for row in rows:
-        if row["phase"] not in ("ramp", "fault", "recovery"):
-            continue
-        if row["user_success_rate"] == "":
-            continue
-        key = (row["scenario_id"], row["window_index"])
-        if key not in flagged_seen and key not in other_seen:
-            other_seen.add(key)
-            other_success.append(float(row["user_success_rate"]))
-    if len(flagged_success) > 0 and len(other_success) > 0:
-        lines.append("users who arrived in a window flagged livelock on any edge got a success %.1f%% of the time"
-                     % (100.0 * sum(flagged_success) / len(flagged_success)))
-        lines.append("users who arrived in any other fault/recovery window got a success %.1f%% of the time"
-                     % (100.0 * sum(other_success) / len(other_success)))
+    for edge in EDGES:
+        normal_total = normal_total + table[edge]["normal"][0]
+        normal_flagged = normal_flagged + table[edge]["normal"][1]
+    lines.append("False alarms (normal phase): %d/%d windows" % (normal_flagged, normal_total))
+    flagged_mean, other_mean = user_success_split(rows)
+    if flagged_mean is not None and other_mean is not None:
+        lines.append("User success: livelock windows %.1f%%  |  other ramp/fault/recovery windows %.1f%%"
+                     % (flagged_mean, other_mean))
     return lines
 
 
 def strategy_name(scenario_id):
-    # exp_metastable_static_retry_r3 -> metastable / static_retry
     name = scenario_id
     if name.startswith("exp_"):
         name = name[4:]
@@ -369,10 +359,7 @@ def strategy_name(scenario_id):
     return name
 
 
-def per_strategy(rows):
-    lines = []
-    lines.append("")
-    lines.append("livelock windows per experiment and retry strategy (all repetitions together)")
+def strategy_counts(rows):
     counts = {}
     runs = {}
     flagged_runs = {}
@@ -386,17 +373,147 @@ def per_strategy(rows):
         if row["label"] == "livelock":
             counts[name] = counts[name] + 1
             flagged_runs[name].add(row["scenario_id"])
+    return counts, runs, flagged_runs
+
+
+def strategy_label(name):
+    for experiment in ["error_burst", "metastable"]:
+        if name.startswith(experiment + "_"):
+            return experiment.replace("_", " ") + "\n" + name[len(experiment) + 1:].replace("_", " ")
+    return name
+
+
+def per_strategy(rows):
+    counts, runs, flagged_runs = strategy_counts(rows)
+    lines = ["", "Table 2. Livelock by experiment and strategy"]
+    header = "%-34s %10s %16s" % ("Experiment / strategy", "Windows", "Runs with LL")
+    lines.append(header)
+    lines.append("-" * len(header))
     for name in sorted(counts):
-        lines.append("  %-30s %4d windows, livelock formed in %d of %d runs"
-                     % (name, counts[name], len(flagged_runs[name]), len(runs[name])))
+        lines.append("%-34s %10d %16s" % (name, counts[name], "%d/%d" % (len(flagged_runs[name]), len(runs[name]))))
     return lines
 
 
-# ---------------- sensitivity analysis ----------------
-#
-# "How did you choose the thresholds?" -- here is what happens if each one
-# is moved up or down. If the conclusions only held for one magic setting,
-# this table would show it.
+def window_of(row):
+    return int(row["window_index"])
+
+
+def example_edge(rows):
+    counts = {}
+    for row in rows:
+        if row["label"] == "livelock":
+            key = (row["scenario_id"], row["source_service"], row["dest_service"])
+            counts[key] = counts.get(key, 0) + 1
+    best = None
+    for key in sorted(counts):
+        if best is None or counts[key] > counts[best]:
+            best = key
+    return best
+
+
+def draw(rows, group, show):
+    table = count_by_edge_phase(rows)
+    colours = [BLUE, ORANGE, GREEN]
+    if group == "experiment":
+        counts, runs, flagged_runs = strategy_counts(rows)
+        names = sorted(counts)
+        fig, ax = plt.subplots(figsize=(10, 4.2))
+        xs = list(range(len(names)))
+        ax.bar(xs, [counts[n] for n in names], color=[RED if counts[n] > 0 else GREY for n in names])
+        ax.grid(False, axis="x")
+        for x, n in zip(xs, names):
+            ax.text(x, counts[n], "%d/%d runs" % (len(flagged_runs[n]), len(runs[n])), ha="center",
+                    va="bottom", fontsize=8)
+        ax.set_xticks(xs)
+        ax.set_xticklabels([strategy_label(n) for n in names], fontsize=8)
+        ax.set_ylabel("Livelock windows")
+        ax.set_title("Livelock windows per experiment and strategy")
+        fig.tight_layout()
+        return save_figure(fig, "detection_%s.png" % group, show)
+
+    fig = plt.figure(figsize=(11, 9))
+    grid = fig.add_gridspec(3, 2, height_ratios=[1.1, 1, 1])
+    ax_a = fig.add_subplot(grid[0, 0])
+    ax_b = fig.add_subplot(grid[0, 1])
+    ax_c = fig.add_subplot(grid[1, :])
+    ax_d = fig.add_subplot(grid[2, 0])
+    ax_e = fig.add_subplot(grid[2, 1])
+
+    width = 0.26
+    for k in range(len(EDGES)):
+        edge = EDGES[k]
+        values = [table[edge][phase][1] for phase in PHASES]
+        xs = [i + (k - 1) * width for i in range(len(PHASES))]
+        ax_a.bar(xs, values, width=width, color=colours[k], label=short_edge(edge))
+        ax_a.grid(False, axis="x")
+    ax_a.set_xticks(range(len(PHASES)))
+    ax_a.set_xticklabels([p.capitalize() for p in PHASES])
+    ax_a.set_ylabel("Livelock windows")
+    ax_a.set_title("(a) Livelock windows by phase")
+    ax_a.grid(axis="x", visible=False)
+    ax_a.legend()
+
+    flagged_mean, other_mean = user_success_split(rows)
+    if flagged_mean is not None and other_mean is not None:
+        bars = ax_b.bar([0, 1], [flagged_mean, other_mean], color=[RED, BLUE], width=0.55)
+        ax_b.grid(False, axis="x")
+        for bar, value in zip(bars, [flagged_mean, other_mean]):
+            ax_b.text(bar.get_x() + bar.get_width() / 2.0, value + 1.5, "%.1f%%" % value, ha="center", fontsize=10)
+    ax_b.set_xticks([0, 1])
+    ax_b.set_xticklabels(["Livelock windows", "Other fault windows"])
+    ax_b.set_ylim(0, 100)
+    ax_b.set_ylabel("User success (%)")
+    ax_b.set_title("(b) User success")
+    ax_b.grid(axis="x", visible=False)
+
+    best = example_edge(rows)
+    if best is not None:
+        scenario_id, source, dest = best
+        manifest = None
+        for m in read_scenarios():
+            if m["scenario_id"] == scenario_id and not m.get("interrupted"):
+                manifest = m
+        edge_rows = [r for r in rows if r["scenario_id"] == scenario_id and r["source_service"] == source
+                     and r["dest_service"] == dest]
+        edge_rows.sort(key=window_of)
+        warm = [r for r in edge_rows if float(r["t_rel"]) < WARMUP_SEC and int(r["n_calls"]) >= MIN_CALLS]
+        base_s = median_of([float(r["s_useful"]) for r in warm]) or 1.0
+        base_c = median_of([float(r["concurrency"]) for r in warm]) or 1.0
+        xs = [float(r["t_rel"]) + WINDOW_SEC / 2.0 for r in edge_rows]
+        for ax in (ax_c, ax_d, ax_e):
+            for r in edge_rows:
+                if r["label"] == "livelock":
+                    ax.axvspan(float(r["t_rel"]), float(r["t_rel"]) + WINDOW_SEC, color=LIVELOCK_SHADE,
+                               linewidth=0, zorder=0)
+            if manifest is not None:
+                start, end = fault_span(manifest)
+                ax.axvline(start - manifest["start"], color=GREY, linestyle=":", linewidth=1.2)
+                ax.axvline(end - manifest["start"], color=GREY, linestyle=":", linewidth=1.2)
+        if manifest is not None:
+            start, end = fault_span(manifest)
+            ax_c.text(start - manifest["start"], 1.01, "fault on", transform=ax_c.get_xaxis_transform(),
+                      ha="center", va="bottom", fontsize=8, color=GREY)
+            ax_c.text(end - manifest["start"], 1.01, "fault off", transform=ax_c.get_xaxis_transform(),
+                      ha="center", va="bottom", fontsize=8, color=GREY)
+        ax_c.plot(xs, [float(r["rho"]) for r in edge_rows], color=ORANGE, marker="o", markersize=3)
+        ax_c.axhline(RHO_CRIT, color=ORANGE, linestyle="--", linewidth=1)
+        ax_c.set_ylabel("rho")
+        ax_c.set_title("(c) %s, %s -> %s: retry amplification rho (C1), shaded = livelock"
+                       % (scenario_id, source, dest.replace("_service", "")), pad=14)
+        ax_d.plot(xs, [float(r["s_useful"]) / base_s for r in edge_rows], color=GREEN, marker="o", markersize=3)
+        ax_d.axhline(BETA, color=GREEN, linestyle="--", linewidth=1)
+        ax_d.set_ylabel("S / S*")
+        ax_d.set_xlabel("Time (s)")
+        ax_d.set_title("(d) Useful throughput (C2)")
+        ax_e.plot(xs, [float(r["concurrency"]) / base_c for r in edge_rows], color=PURPLE, marker="o",
+                  markersize=3)
+        ax_e.axhline(C_FACTOR, color=PURPLE, linestyle="--", linewidth=1)
+        ax_e.set_ylabel("N / N*")
+        ax_e.set_xlabel("Time (s)")
+        ax_e.set_title("(e) Calls in flight (C3)")
+    fig.tight_layout()
+    return save_figure(fig, "detection_%s.png" % group, show)
+
 
 SWEEP = [
     ("RHO_CRIT", [0.5, 0.75, 1.0, 1.25, 1.5]),
@@ -444,14 +561,15 @@ def write_sensitivity(results):
             writer.writerow(result)
 
     lines = []
-    lines.append("Threshold sensitivity (one parameter moved at a time, others at default)")
-    lines.append("=" * 72)
-    lines.append("%-10s %7s   %14s %8s %8s %10s" % ("parameter", "value", "false alarms", "ramp", "fault", "recovery"))
+    lines.append("Table 3. Threshold sensitivity (livelock windows; one parameter changed at a time)")
+    header = "%-10s %7s %14s %8s %8s %10s" % ("Parameter", "Value", "Normal (FA)", "Ramp", "Fault", "Recovery")
+    lines.append(header)
+    lines.append("-" * len(header))
     for result in results:
-        mark = " <- default" if result["is_default"] else ""
-        lines.append("%-10s %7s   %14s %8d %8d %10d%s" % (
+        mark = "  *" if result["is_default"] else ""
+        lines.append("%-10s %7s %14s %8d %8d %10d%s" % (
             result["parameter"], result["value"],
-            "%d / %d" % (result["livelock_normal"], result["windows_normal"]),
+            "%d/%d" % (result["livelock_normal"], result["windows_normal"]),
             result["livelock_ramp"], result["livelock_fault"], result["livelock_recovery"], mark))
     text = "\n".join(lines)
     with open(os.path.join(RESULTS_DIR, "sensitivity.txt"), "w") as f:
@@ -461,17 +579,15 @@ def write_sensitivity(results):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--group", type=str, default="dataset",
-                        help="which scenarios to label: dataset, experiment, manual, or all")
-    parser.add_argument("--sensitivity", action="store_true",
-                        help="also re-label with each threshold moved up and down")
+    parser.add_argument("--group", type=str, default="dataset")
+    parser.add_argument("--sensitivity", action="store_true")
+    parser.add_argument("--no_show", action="store_true")
     args = parser.parse_args()
     make_dirs()
 
     manifests = select_manifests(args.group)
     if len(manifests) == 0:
-        print("no scenarios found in group '%s'." % args.group)
-        print("run scenario_runner.py (or generate_dataset.py) first.")
+        print("error: no runs in group '%s'" % args.group)
         sys.exit(1)
 
     scenario_ids = []
@@ -480,38 +596,34 @@ def main():
 
     call_records, skipped_calls = read_call_records(scenario_ids)
     user_records, skipped_users = read_user_records(scenario_ids)
-    if skipped_calls + skipped_users > 0:
-        print("warning: skipped %d damaged log line(s)" % (skipped_calls + skipped_users))
-    print("loaded %d call records and %d user requests from %d scenario(s)"
-          % (len(call_records), len(user_records), len(manifests)))
-
     call_by_scenario = group_records_by_scenario(call_records)
     user_by_scenario = group_records_by_scenario(user_records)
 
     rows, all_baselines = label_all(manifests, DEFAULT_THRESHOLDS, call_by_scenario, user_by_scenario)
     path = output_path(args.group)
     write_rows(path, rows)
-    print("wrote %d labelled windows to %s" % (len(rows), path))
 
     if args.group == "dataset":
         baselines = global_baselines(all_baselines)
         with open(os.path.join(DATA_DIR, "baselines.json"), "w") as f:
             json.dump(baselines, f, indent=2)
 
-    lines = summarize(rows, "Livelock detection -- group '%s'" % args.group)
+    lines = summarize(rows, args.group)
     if args.group == "experiment":
         lines.extend(per_strategy(rows))
     text = "\n".join(lines)
-    print("")
     print(text)
     with open(os.path.join(RESULTS_DIR, "labeling_%s.txt" % args.group), "w") as f:
         f.write(text + "\n")
 
     if args.sensitivity:
-        print("")
-        print("running the threshold sensitivity sweep...")
         results = run_sensitivity(manifests, call_by_scenario, user_by_scenario)
+        print("")
         print(write_sensitivity(results))
+
+    print("")
+    print("Labels: %s" % os.path.relpath(path, CODE_DIR))
+    draw(rows, args.group, not args.no_show)
 
 
 if __name__ == "__main__":

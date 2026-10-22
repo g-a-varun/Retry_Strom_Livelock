@@ -43,10 +43,6 @@ def checkout():
     try:
         config = load_config(SERVICE_NAME)
 
-        # queue_wait_sec is how long a request may wait for a free slot.
-        # Short (1s): requests that cannot be served are rejected quickly.
-        # Long (10s): like a big thread-pool queue. A request can still be
-        # waiting long after the gateway that sent it has given up.
         change_counter("waiting", 1)
         got_slot = worker_slots.acquire(timeout=config["queue_wait_sec"])
         change_counter("waiting", -1)
@@ -65,9 +61,6 @@ def checkout():
             if should_fail:
                 status = 500
             else:
-                # note: this service does NOT check whether the gateway is
-                # still waiting. Like most real services, it finishes the
-                # work anyway. That is where wasted (orphaned) work comes from.
                 payment_ok = call_with_retry(SERVICE_NAME, "payment_service",
                                              PAYMENT_URL, scenario_id, run_type)
                 inventory_ok = call_with_retry(SERVICE_NAME, "inventory_service",

@@ -1,7 +1,5 @@
 import os
 
-# every path in the project is built from here, so the scripts work no
-# matter which folder you run them from
 CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(CODE_DIR, "configs")
 DATA_DIR = os.path.join(CODE_DIR, "data")
@@ -20,8 +18,6 @@ SERVICE_PORTS = {
     "order_service": 5003,
 }
 
-# the call graph: user -> gateway -> order_service -> payment_service
-#                                                  -> inventory_service
 EDGES = [
     ("gateway", "order_service"),
     ("order_service", "payment_service"),
@@ -30,7 +26,6 @@ EDGES = [
 
 NODES = ["gateway", "order_service", "payment_service", "inventory_service"]
 
-# the edge directly above / below each edge on the call path
 PARENT_EDGE = {
     ("gateway", "order_service"): None,
     ("order_service", "payment_service"): ("gateway", "order_service"),
@@ -44,9 +39,6 @@ CHILD_EDGES = {
     ("order_service", "inventory_service"): [],
 }
 
-# healthy settings. run_all.py writes these into configs/ every time the
-# services start, so a run that crashed half way through a fault can never
-# leave the system broken for the next run.
 DEFAULT_SERVICE_CONFIGS = {
     "order_service": {
         "failure_rate": 0.02,
@@ -74,13 +66,10 @@ DEFAULT_SLOTS = {
     "inventory_service": 2,
 }
 
-# industry-default retry policy: 3 attempts, exponential backoff with
-# jitter, 2 second timeout per attempt
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BACKOFF_BASE_MS = 100
 DEFAULT_TIMEOUT_MS = 2000
 
-# how long a user waits for the whole checkout before giving up
 USER_TIMEOUT_SEC = 15.0
 
 

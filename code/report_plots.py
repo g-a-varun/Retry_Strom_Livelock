@@ -17,19 +17,6 @@ import make_figures as mf
 import evaluate_model as ev
 import prediction_model
 
-# Plots for the IEEE report (report/figs/*.pdf).
-#
-# Same data and same counting as make_figures.py / evaluate_model.py, but
-# drawn the way the IEEE template wants:
-#   - one column is 3.5 inches wide, so the figures are made 3.5 in wide
-#     and the text is 7-8 pt, the same size as the caption
-#   - Times font (Liberation Serif has the same letter widths if Times
-#     New Roman is not installed)
-#   - no titles inside the plot: the LaTeX caption is the title
-#   - lines differ by style AND marker, so they still read in black and white
-#   - saved as PDF (vector), so nothing gets blurry when zoomed
-#
-#   python report_plots.py            (writes into ../report/figs/)
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "report", "figs")
 
@@ -67,7 +54,6 @@ ONE_COLUMN = 3.45
 TWO_COLUMNS = 7.1
 FAULT_GREY = "0.88"
 
-# strategy -> (label, line style) ; default matplotlib colours C0..C3
 STRATEGY_LINES = [("static_retry", "static retry", "C3", "--", "s"),
                   ("retry_budget", "retry budget", "C2", "-.", "^"),
                   ("predictive", "predictive (ours)", "C0", "-", "o")]
@@ -91,8 +77,6 @@ def shade_fault(ax, manifest):
     if start is not None:
         ax.axvspan(start - manifest["start"], end - manifest["start"], color=FAULT_GREY, linewidth=0, zorder=0)
 
-
-# ------------------------------------------------------------ fig: timeline
 
 def timeline_plot(experiment, rep, name):
     manifests = {}
@@ -133,8 +117,6 @@ def timeline_plot(experiment, rep, name):
     save(fig, name)
 
 
-# ------------------------------------------------------------ fig: busy
-
 def busy_plot(experiment, rep):
     scenario_id = "exp_%s_static_retry_r%d" % (experiment, rep)
     m = mf.find_manifest(scenario_id)
@@ -148,7 +130,6 @@ def busy_plot(experiment, rep):
     servers = within_run(servers, m)
     users = within_run(users, m)
 
-    # same counting as make_figures.busy_no_progress_figure
     width = 2.0
     n = int(math.ceil(seconds / width))
     busy = [0.0] * n
@@ -194,8 +175,6 @@ def busy_plot(experiment, rep):
     save(fig, "plot_busy.pdf")
 
 
-# ------------------------------------------------------------ fig: summary bars
-
 def summary_plot():
     rows = mf.load_runs()
     if len(rows) == 0:
@@ -237,8 +216,6 @@ def summary_plot():
     fig.tight_layout(w_pad=0.8)
     save(fig, "plot_summary.pdf")
 
-
-# ------------------------------------------------------------ fig: detection
 
 def detection_plot(scenario_id="ds_06", source="gateway", dest="order_service"):
     import csv
@@ -283,7 +260,7 @@ def detection_plot(scenario_id="ds_06", source="gateway", dest="order_service"):
             rx.append(float(r["t_rel"]) + 1.0)
             ry.append(risk[int(r["window_index"])])
     axes[3].plot(rx, ry, "k-", marker="o", markersize=2.2)
-    axes[3].axhline(0.5, color="C3", linestyle="--", linewidth=0.8)
+    axes[3].axhline(mf.model_threshold(), color="C3", linestyle="--", linewidth=0.8)
     axes[3].set_ylim(-0.08, 1.08)
     axes[3].set_yticks([0, 0.5, 1])
     axes[3].set_ylabel("Risk $p$")
@@ -293,8 +270,6 @@ def detection_plot(scenario_id="ds_06", source="gateway", dest="order_service"):
     fig.align_ylabels(axes)
     save(fig, "plot_detection.pdf")
 
-
-# ------------------------------------------------------------ fig: lead time
 
 def lead_time_plot():
     import json
@@ -319,8 +294,6 @@ def lead_time_plot():
     fig.tight_layout()
     save(fig, "plot_lead_time.pdf")
 
-
-# ------------------------------------------------------------ fig: model evaluation
 
 def evaluation_plot():
     rows = ev.load_rows()
@@ -365,7 +338,7 @@ def evaluation_plot():
     ax.plot(ts, [s["recall"] for s in sweep_rows], "C3--", marker="s", label="Recall")
     ax.plot(ts, [s["f1"] for s in sweep_rows], "C0-", marker="o", label="F1")
     ax.plot(ts, [s["healthy_alarm_pct"] / 100.0 for s in sweep_rows], "k:", marker="x", label="Healthy alarms")
-    ax.axvline(0.5, color="black", linewidth=0.5)
+    ax.axvline(mf.model_threshold(), color="black", linewidth=0.5)
     ax.set_ylim(0, 1.03)
     ax.set_xlabel("Threshold\n(d) Moving the threshold")
     ax.legend(loc="lower right", bbox_to_anchor=(1.0, 0.06), fontsize=5.5, handlelength=1.8)
@@ -375,8 +348,6 @@ def evaluation_plot():
     fig.tight_layout(h_pad=0.6, w_pad=0.6)
     save(fig, "plot_model_eval.pdf")
 
-
-# ------------------------------------------------------------ fig: controller trace
 
 def controller_plot(experiment, rep):
     scenario_id = "exp_%s_predictive_r%d" % (experiment, rep)
@@ -401,7 +372,7 @@ def controller_plot(experiment, rep):
     axes[0].set_yticks([1, 2, 3])
     axes[0].set_ylim(0.7, 3.3)
     axes[0].set_ylabel("Attempts allowed")
-    axes[1].axhline(0.5, color="black", linewidth=0.5)
+    axes[1].axhline(mf.model_threshold(), color="black", linewidth=0.5)
     axes[1].set_ylim(-0.08, 1.08)
     axes[1].set_ylabel("Risk $p$")
     axes[1].set_xlabel("Time (s)")

@@ -11,20 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common.config import RESULTS_DIR, EDGES, edge_name, make_dirs
 from common.telemetry import read_call_records, read_scenarios
 
-# Compares the testbed with REAL production data: the Alibaba microservice
-# trace (cluster-trace-microservices-v2021, about 20,000 microservices).
-#
-# Download ONE file, e.g. MSCallGraph_0.tar.gz (~170 MB) from
-#   http://aliopentrace.oss-cn-beijing.aliyuncs.com/v2021MicroservicesTraces/MSCallGraph/MSCallGraph_0.tar.gz
-# and run
-#   python calibrate_from_trace.py MSCallGraph_0.tar.gz
-# (.tar.gz, .csv.gz or an extracted .csv all work)
-#
-# What the trace CAN tell us: call-graph shape (fan-out, depth) and
-# response times of real service-to-service calls.
-# What it CANNOT: retries, error codes, livelock. It has no attempt number
-# and no status field. That is why the dataset itself has to be generated,
-# and this trace is used to check that the testbed is realistic.
 
 REPORT_PATH = os.path.join(RESULTS_DIR, "calibration_report.txt")
 
@@ -39,7 +25,6 @@ MAX_ROWS = 2000000
 
 
 def open_trace(path):
-    # returns a text stream of the CSV, whatever the packaging
     if path.endswith(".tar.gz") or path.endswith(".tgz") or path.endswith(".tar"):
         archive = tarfile.open(path, "r:*")
         for member in archive:
@@ -95,7 +80,6 @@ def read_trace(path, max_rows):
     if looks_like_header(first):
         header = first
     else:
-        # the v2021 files have no header row; this is the documented order
         header = ["", "traceid", "timestamp", "rpcid", "um", "rpctype", "dm", "interface", "rt"]
         if len(first) == 8:
             header = header[1:]
@@ -145,8 +129,6 @@ def read_trace(path, max_rows):
 
         if i_rt >= 0 and i_rt < len(row):
             try:
-                # each RPC is logged twice (caller side and callee side) and
-                # the sign tells which side; the size is the response time
                 rt = abs(float(row[i_rt]))
                 response_times.append(rt)
             except ValueError:
@@ -163,7 +145,6 @@ def read_trace(path, max_rows):
 
 
 def testbed_latencies():
-    # measured healthy latency of each testbed edge, from the dataset runs
     ids = []
     windows = {}
     for manifest in read_scenarios():

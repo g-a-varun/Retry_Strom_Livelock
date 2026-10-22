@@ -4,9 +4,6 @@ from common.config import (DATA_DIR, EDGES, edge_name, DEFAULT_MAX_ATTEMPTS,
                            DEFAULT_BACKOFF_BASE_MS, DEFAULT_TIMEOUT_MS)
 from common.safe_files import read_json, write_json_atomic, remove_file
 
-# The retry policy of every edge lives in one small JSON file. The services
-# read it on every call, the controller (or an experiment) writes it.
-# No file = everyone uses the default policy.
 
 POLICY_PATH = os.path.join(DATA_DIR, "retry_policy.json")
 
@@ -30,7 +27,6 @@ def get_retry_policy(name):
 
     data = read_json(POLICY_PATH)
     if data is None:
-        # file is being swapped right now. use what we saw last time.
         if name in last_good_policy:
             return last_good_policy[name]
         return policy
@@ -47,7 +43,6 @@ def get_retry_policy(name):
 
 
 def clean_policy(policy):
-    # never allow nonsense values, whoever wrote the file
     cleaned = default_policy()
     try:
         cleaned["max_attempts"] = max(1, int(policy["max_attempts"]))

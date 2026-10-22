@@ -15,10 +15,7 @@ from common.config import DATA_DIR, RESULTS_DIR, FIGURES_DIR, DEFAULT_SLOTS, mak
 from common.telemetry import (read_call_records, read_user_records, read_server_records,
                               read_scenarios, read_jsonl, data_path, CONTROLLER_LOG_NAME, within_run)
 
-# Draws every figure used in the report / slides into results/figures/.
-# Each figure is skipped (with a message) if the data it needs is missing.
 
-# colour-blind-safe categorical colours (validated), used in a fixed order
 BLUE = "#2a78d6"
 ORANGE = "#eb6834"
 AQUA = "#1baf7a"
@@ -53,6 +50,14 @@ def save(fig, name):
     fig.savefig(path, dpi=160, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print("  wrote results/figures/%s" % name)
+
+
+def model_threshold():
+    path = os.path.join(RESULTS_DIR, "model.json")
+    if not os.path.exists(path):
+        return 0.5
+    with open(path, "r") as f:
+        return json.load(f).get("threshold", 0.5)
 
 
 def find_manifest(scenario_id):
@@ -231,7 +236,6 @@ def summary_figure(rows):
                     if n_ok == 0:
                         text = "never\n(>%s)" % text
                     elif n_ok < n_all:
-                        # runs that never recovered are counted at the full window
                         text = "%s\n%d/%d recovered" % (text, n_ok, n_all)
                 ax.text(xs[n], heights[n] + errors[n] + top * 0.03, text,
                         ha="center", fontsize=8, color=INK)
@@ -260,7 +264,6 @@ def detection_figure():
     with open(path, "r") as f:
         rows = list(csv.DictReader(f))
 
-    # pick the scenario + edge with the most livelock windows
     counts = {}
     for row in rows:
         if row["label"] == "livelock":
@@ -323,7 +326,7 @@ def detection_figure():
                 rx.append(float(r["t_rel"]) + 1.0)
                 ry.append(risk[index])
         axes[-1].plot(rx, ry, color=BLUE, linewidth=2)
-        axes[-1].axhline(0.5, color=ORANGE, linewidth=1.2)
+        axes[-1].axhline(model_threshold(), color=ORANGE, linewidth=1.2)
         axes[-1].set_ylim(-0.05, 1.05)
         axes[-1].set_ylabel("predicted risk\n(next 2-12 s)", fontsize=8, color=INK)
     axes[-1].set_xlabel("seconds since the run started   (vertical lines: fault starts / is removed;"
@@ -357,13 +360,13 @@ def prediction_figure():
     with open(path, "r") as f:
         metrics = json.load(f)
 
-    names = [("logistic regression (ours)", "our model"),
-             ("without graph features", "ours, no graph features"),
-             ("without temporal features", "ours, no temporal features"),
-             ("random forest (comparison)", "random forest"),
-             ("rule: storm right now (reactive)", "reactive rule (no learning)"),
-             ("rule: livelock right now (persistence)", "rule: livelock now"),
-             ("shuffled-label control", "shuffled-label control")]
+    names = [("Logistic regression", "our model"),
+             ("w/o graph features", "ours, no graph features"),
+             ("w/o temporal features", "ours, no temporal features"),
+             ("Random forest", "random forest"),
+             ("Reactive rule", "reactive rule (no learning)"),
+             ("Persistence rule", "rule: livelock now"),
+             ("Shuffled labels", "shuffled-label control")]
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
     for p in range(2):
@@ -379,7 +382,7 @@ def prediction_figure():
             if key in metrics[subset_key]:
                 labels.append(label)
                 values.append(metrics[subset_key][key]["f1"])
-                colours.append(BLUE if key.startswith("logistic") else GREY)
+                colours.append(BLUE if key.startswith("Logistic") else GREY)
         ys = list(range(len(labels)))
         ys.reverse()
         ax.barh(ys, values, height=0.55, color=colours)
@@ -450,7 +453,7 @@ def controller_figure(experiment, rep):
     axes[0].set_yticks([1, 2, 3])
     axes[0].set_ylim(0.7, 3.4)
     axes[0].legend(fontsize=8, frameon=False, loc="lower left")
-    axes[1].axhline(0.5, color=MUTED, linewidth=1)
+    axes[1].axhline(model_threshold(), color=MUTED, linewidth=1)
     axes[1].set_ylim(-0.05, 1.05)
     axes[1].set_ylabel("predicted livelock risk", fontsize=9, color=INK)
     axes[1].set_xlabel("seconds since the run started (shaded: fault active)", fontsize=9, color=INK)

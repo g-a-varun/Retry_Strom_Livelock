@@ -18,8 +18,6 @@ quiet_flask_logs()
 
 SERVICE_NAME = "inventory_service"
 
-# a counting semaphore = a fixed number of worker slots. A request must
-# hold a slot for its whole duration, so capacity is real and limited.
 worker_slots = None
 
 
@@ -55,7 +53,6 @@ def reserve():
             return "inventory service busy", 503
 
         try:
-            # read the config again: the fault may have changed while we queued
             config = load_config(SERVICE_NAME)
             should_fail, latency_ms = do_work(config)
         finally:

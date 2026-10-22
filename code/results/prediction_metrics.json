@@ -1,115 +1,143 @@
 {
   "all": {
-    "logistic regression (ours)": {
-      "precision": 0.6802973977695167,
-      "recall": 0.8472222222222222,
-      "f1": 0.7546391752577319,
+    "Logistic regression": {
+      "accuracy": 0.9410150891632373,
+      "precision": 0.8066037735849056,
+      "recall": 0.7916666666666666,
+      "f1": 0.7990654205607477,
+      "mcc": 0.7645489076582912,
       "positives": 216,
       "n": 1458,
-      "pr_auc": 0.8431119370568227
+      "pr_auc": 0.8526432610673573
     },
-    "without graph features": {
-      "precision": 0.6618181818181819,
-      "recall": 0.8425925925925926,
-      "f1": 0.7413441955193483,
+    "w/o graph features": {
+      "accuracy": 0.9238683127572016,
+      "precision": 0.7178423236514523,
+      "recall": 0.8009259259259259,
+      "f1": 0.7571115973741794,
+      "mcc": 0.713632897078485,
       "positives": 216,
       "n": 1458,
-      "pr_auc": 0.7995422878820563
+      "pr_auc": 0.8115685707042081
     },
-    "without temporal features": {
-      "precision": 0.6642599277978339,
-      "recall": 0.8518518518518519,
-      "f1": 0.7464503042596349,
+    "w/o temporal features": {
+      "accuracy": 0.9403292181069959,
+      "precision": 0.8086124401913876,
+      "recall": 0.7824074074074074,
+      "f1": 0.7952941176470588,
+      "mcc": 0.7605208358501901,
       "positives": 216,
       "n": 1458,
-      "pr_auc": 0.8358887551414428
+      "pr_auc": 0.8461201924710147
     },
-    "random forest (comparison)": {
-      "precision": 0.7637130801687764,
-      "recall": 0.8379629629629629,
-      "f1": 0.7991169977924945,
+    "Random forest": {
+      "accuracy": 0.9410150891632373,
+      "precision": 0.825,
+      "recall": 0.7638888888888888,
+      "f1": 0.7932692307692307,
+      "mcc": 0.7596930428725501,
       "positives": 216,
       "n": 1458,
-      "pr_auc": 0.8841510486385351
+      "pr_auc": 0.8832950674500263
     },
-    "shuffled-label control": {
-      "precision": 0.09197080291970802,
-      "recall": 0.2916666666666667,
-      "f1": 0.13984461709211987,
+    "Shuffled labels": {
+      "accuracy": 0.1598079561042524,
+      "precision": 0.12986060161408658,
+      "recall": 0.8194444444444444,
+      "f1": 0.22419252691576946,
+      "mcc": -0.19498958725658525,
       "positives": 216,
       "n": 1458,
-      "pr_auc": 0.14375507864050313
+      "pr_auc": 0.12139662969717577
     },
-    "rule: storm right now (reactive)": {
+    "Reactive rule": {
+      "accuracy": 0.8984910836762688,
       "precision": 0.7151898734177216,
       "recall": 0.5231481481481481,
       "f1": 0.6042780748663101,
+      "mcc": 0.5564699732463977,
       "positives": 216,
       "n": 1458,
       "pr_auc": null
     },
-    "rule: livelock right now (persistence)": {
+    "Persistence rule": {
+      "accuracy": 0.9005486968449932,
       "precision": 0.8736842105263158,
       "recall": 0.38425925925925924,
       "f1": 0.5337620578778135,
+      "mcc": 0.539191117213232,
       "positives": 216,
       "n": 1458,
       "pr_auc": null
     }
   },
   "onset": {
-    "logistic regression (ours)": {
-      "precision": 0.5766871165644172,
-      "recall": 0.7642276422764228,
-      "f1": 0.6573426573426573,
+    "Logistic regression": {
+      "accuracy": 0.9500372856077554,
+      "precision": 0.7456140350877193,
+      "recall": 0.6910569105691057,
+      "f1": 0.7172995780590717,
+      "mcc": 0.6905392589841253,
       "positives": 123,
       "n": 1341,
-      "pr_auc": 0.7361960183037911
+      "pr_auc": 0.7793066740812477
     },
-    "without graph features": {
-      "precision": 0.5487804878048781,
-      "recall": 0.7317073170731707,
-      "f1": 0.627177700348432,
+    "w/o graph features": {
+      "accuracy": 0.9299030574198359,
+      "precision": 0.60431654676259,
+      "recall": 0.6829268292682927,
+      "f1": 0.6412213740458015,
+      "mcc": 0.6039225160676028,
       "positives": 123,
       "n": 1341,
-      "pr_auc": 0.6348209238230726
+      "pr_auc": 0.699728124028259
     },
-    "without temporal features": {
-      "precision": 0.5535714285714286,
-      "recall": 0.7560975609756098,
-      "f1": 0.6391752577319587,
+    "w/o temporal features": {
+      "accuracy": 0.9485458612975392,
+      "precision": 0.7410714285714286,
+      "recall": 0.6747967479674797,
+      "f1": 0.7063829787234043,
+      "mcc": 0.6791468841950937,
       "positives": 123,
       "n": 1341,
-      "pr_auc": 0.7318511398013586
+      "pr_auc": 0.7798977745266877
     },
-    "random forest (comparison)": {
-      "precision": 0.6766917293233082,
-      "recall": 0.7317073170731707,
-      "f1": 0.703125,
+    "Random forest": {
+      "accuracy": 0.9485458612975392,
+      "precision": 0.7647058823529411,
+      "recall": 0.6341463414634146,
+      "f1": 0.6933333333333334,
+      "mcc": 0.6689925629846711,
       "positives": 123,
       "n": 1341,
-      "pr_auc": 0.7858067137805455
+      "pr_auc": 0.7855721980500335
     },
-    "shuffled-label control": {
-      "precision": 0.06382978723404255,
-      "recall": 0.34146341463414637,
-      "f1": 0.10755441741357234,
+    "Shuffled labels": {
+      "accuracy": 0.11558538404175989,
+      "precision": 0.08248232521602514,
+      "recall": 0.8536585365853658,
+      "f1": 0.1504297994269341,
+      "mcc": -0.1385150548852041,
       "positives": 123,
       "n": 1341,
-      "pr_auc": 0.08783951950188108
+      "pr_auc": 0.07211183824203413
     },
-    "rule: storm right now (reactive)": {
+    "Reactive rule": {
+      "accuracy": 0.9082774049217002,
       "precision": 0.5,
       "recall": 0.23577235772357724,
       "f1": 0.32044198895027626,
+      "mcc": 0.3007520472008692,
       "positives": 123,
       "n": 1341,
       "pr_auc": null
     },
-    "rule: livelock right now (persistence)": {
+    "Persistence rule": {
+      "accuracy": 0.9082774049217002,
       "precision": 0.0,
       "recall": 0.0,
       "f1": 0.0,
+      "mcc": 0.0,
       "positives": 123,
       "n": 1341,
       "pr_auc": null
@@ -119,26 +147,26 @@
     "our model": {
       "lead_times": [
         8.0,
-        8.0,
+        6.0,
         10.0,
         10.0,
         10.0,
         6.0,
         8.0,
+        6.0,
+        8.0,
+        8.0,
+        8.0,
+        10.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        10.0,
+        2.0,
+        10.0,
+        6.0,
         4.0,
-        8.0,
-        10.0,
-        8.0,
-        10.0,
-        10.0,
-        8.0,
-        8.0,
-        8.0,
-        10.0,
-        8.0,
-        10.0,
-        6.0,
-        8.0,
         10.0,
         6.0,
         10.0,
@@ -151,7 +179,7 @@
       ],
       "missed": 0,
       "episodes": 30,
-      "healthy_alarms": 8,
+      "healthy_alarms": 0,
       "healthy_windows": 576
     },
     "reactive rule": {
@@ -190,22 +218,42 @@
   "n_examples": 1458,
   "n_positive": 216,
   "n_scenarios": 28,
+  "fold_thresholds": [
+    0.7,
+    0.8,
+    0.75,
+    0.7,
+    0.65
+  ],
+  "confusion_matrix": [
+    [
+      1201,
+      41
+    ],
+    [
+      45,
+      171
+    ]
+  ],
   "weights": {
-    "rho": -0.12675149027701807,
-    "fail_ratio": 1.890122459933177,
-    "overload_ratio": -1.6468284261586257,
-    "latency_ratio": -0.6012410130110241,
-    "concurrency_ratio": 1.5276865087053015,
-    "d_rho": 0.07711487782605707,
-    "d_fail_ratio": 0.19932479023714197,
-    "d_latency_ratio": 0.5074599597932539,
-    "down_max_overload": -0.8396897203522041,
-    "down_max_latency_ratio": 1.5211724940442592,
-    "down_max_fail_ratio": -0.36430907289614883,
-    "up_rho": 0.02697341230001775,
-    "up_overload_ratio": -0.4371859906889494,
-    "edge_gateway_order": 0.8618943013505441,
-    "edge_order_payment": -0.7926586678606325,
-    "edge_order_inventory": -0.0692356334899047
-  }
+    "rho": 0.7998745708166975,
+    "fail_ratio": 0.11473922884815242,
+    "overload_ratio": -1.208546401924417,
+    "log_latency_ratio": -1.3921741429600794,
+    "log_concurrency_ratio": 1.9328377610660594,
+    "useful_ratio": -1.7818005504491066,
+    "d_rho": -0.21073584880816268,
+    "d_fail_ratio": 0.2508742717517397,
+    "d_latency_ratio": -0.1343233889121771,
+    "d_concurrency_ratio": 0.6597121016563898,
+    "down_max_overload": -0.4661864685913388,
+    "log_down_max_latency_ratio": 0.9345799688150599,
+    "down_max_fail_ratio": -0.5571947927498885,
+    "up_rho": -0.030099812490793486,
+    "up_overload_ratio": -0.6454366706199491,
+    "edge_gateway_order": 0.7769486779719457,
+    "edge_order_payment": -0.7438500458508606,
+    "edge_order_inventory": -0.033098632121088004
+  },
+  "threshold": 0.65
 }

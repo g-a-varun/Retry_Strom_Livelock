@@ -11,7 +11,6 @@ from common.config import CODE_DIR, SERVICE_PORTS, DEFAULT_SLOTS, make_dirs
 from common.fault_injection import reset_all_configs
 from common.retry_policy import reset_policy
 
-# start order matters a little: leaf services first, gateway last
 SERVICES = [
     ("payment_service", os.path.join(CODE_DIR, "services", "payment_service.py")),
     ("inventory_service", os.path.join(CODE_DIR, "services", "inventory_service.py")),
@@ -68,8 +67,6 @@ def start_services(slots_by_service, log_file=None, verbose=True):
         print("and try again.")
         return None
 
-    # always start from a clean, healthy state: no leftover fault from a
-    # run that was stopped half way, no leftover retry policy
     reset_all_configs()
     reset_policy()
 
@@ -109,10 +106,6 @@ def service_counters(name):
 
 
 def wait_until_idle(timeout_sec=40, verbose=False):
-    # Wait until no service is working on anything. Needed between runs:
-    # with a long queue, abandoned requests can keep a service busy for
-    # several seconds after the users have gone, and that leftover work
-    # must not leak into the next run.
     deadline = time.time() + timeout_sec
     quiet_since = None
     while time.time() < deadline:

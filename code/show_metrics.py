@@ -1,3 +1,4 @@
+import argparse
 import csv
 import json
 import os
@@ -6,18 +7,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from common.config import RESULTS_DIR
+from matplotlib.colors import ListedColormap
 
-# Shows how good the livelock prediction model is, step by step:
-# the confusion matrix, then every metric with its formula and the actual
-# numbers put into it. Everything is computed here with plain Python
-# (loops, +, -, *, /, sqrt) -- no numpy, no scikit-learn -- so every number
-# can be followed by hand.
-#
-# Input: results/prediction_oof.csv, written by prediction_model.py. Every
-# row is one edge in one 2-second window, with the risk given by a model
-# that NEVER saw that run (5-fold cross-validation, split by run).
-#
-#   python show_metrics.py          (takes about a second, no services needed)
+from common.plots import plt, save_figure, BLUE, ORANGE, GREY
 
 OOF_PATH = os.path.join(RESULTS_DIR, "prediction_oof.csv")
 MODEL_PATH = os.path.join(RESULTS_DIR, "model.json")
@@ -31,6 +23,8 @@ def load_rows():
                 "scenario_id": row["scenario_id"],
                 "y": int(row["label_future"]),
                 "risk": float(row["risk"]),
+                "alarm": int(row["alarm"]),
+                "threshold": float(row["threshold"]),
                 "rule": int(row["rule_reactive"]),
             })
     return rows
@@ -60,7 +54,6 @@ def divide(a, b):
 
 
 def square_root(x):
-    # Newton's method, so even the square root is done by hand
     if x <= 0:
         return 0.0
     guess = x
@@ -87,9 +80,6 @@ def metrics_from_cells(tp, fp, tn, fn):
 
 
 def roc_auc_by_hand(y, scores):
-    # ROC-AUC = the chance that a random window where livelock DID come gets
-    # a higher risk than a random window where it did not (ties count half).
-    # Checked over every (yes, no) pair.
     yes_scores = []
     no_scores = []
     for i in range(len(y)):
@@ -112,9 +102,6 @@ def risk_of(pair):
 
 
 def pr_auc_by_hand(y, scores):
-    # PR-AUC (average precision): go down the windows from the highest risk
-    # to the lowest; every time recall goes up, add
-    # (increase in recall) x (precision at that point).
     pairs = []
     for i in range(len(y)):
         pairs.append((scores[i], y[i]))
@@ -126,7 +113,6 @@ def pr_auc_by_hand(y, scores):
     last_recall = 0.0
     i = 0
     while i < len(pairs):
-        # windows with exactly the same risk are taken together
         j = i
         while j < len(pairs) and pairs[j][0] == pairs[i][0]:
             seen = seen + 1
@@ -140,116 +126,179 @@ def pr_auc_by_hand(y, scores):
     return area
 
 
+def roc_points(y, scores):
+    pairs = []
+    for i in range(len(y)):
+        pairs.append((scores[i], y[i]))
+    pairs.sort(key=risk_of, reverse=True)
+    total_yes = sum(y)
+    total_no = len(y) - total_yes
+    fpr = [0.0]
+    tpr = [0.0]
+    tp = 0
+    fp = 0
+    i = 0
+    while i < len(pairs):
+        j = i
+        while j < len(pairs) and pairs[j][0] == pairs[i][0]:
+            if pairs[j][1] == 1:
+                tp = tp + 1
+            else:
+                fp = fp + 1
+            j = j + 1
+        fpr.append(divide(fp, total_no))
+        tpr.append(divide(tp, total_yes))
+        i = j
+    return fpr, tpr
+
+
+def pr_points(y, scores):
+    pairs = []
+    for i in range(len(y)):
+        pairs.append((scores[i], y[i]))
+    pairs.sort(key=risk_of, reverse=True)
+    total_yes = sum(y)
+    recall = []
+    precision = []
+    found = 0
+    seen = 0
+    i = 0
+    while i < len(pairs):
+        j = i
+        while j < len(pairs) and pairs[j][0] == pairs[i][0]:
+            seen = seen + 1
+            found = found + pairs[j][1]
+            j = j + 1
+        recall.append(divide(found, total_yes))
+        precision.append(divide(found, seen))
+        i = j
+    return recall, precision
+
+
 def pct(x):
-    return "%5.1f %%" % (100.0 * x)
+    return "%.1f%%" % (100.0 * x)
+
+
+def draw(cells, y, risk, m, auc, ap, show):
+    tp, fp, tn, fn = cells
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.3))
+
+    ax = axes[0]
+    grid = [[tn, fp], [fn, tp]]
+    ax.imshow([[1, 0], [0, 1]], cmap=ListedColormap(["#fbd5d1", "#cfeacb"]), vmin=0, vmax=1)
+    names = [["TN", "FP"], ["FN", "TP"]]
+    for r in range(2):
+        for c in range(2):
+            ax.text(c, r, "%s\n%d" % (names[r][c], grid[r][c]), ha="center", va="center", fontsize=13,
+                    fontweight="bold")
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(["Predicted NO", "Predicted YES"])
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(["Actual NO", "Actual YES"])
+    ax.grid(False)
+    for side in ["top", "right", "left", "bottom"]:
+        ax.spines[side].set_visible(False)
+    ax.set_title("(a) Confusion matrix, accuracy %s" % pct(m["accuracy"]))
+
+    fpr, tpr = roc_points(y, risk)
+    axes[1].plot(fpr, tpr, color=BLUE, label="Logistic regression (AUC %.3f)" % auc)
+    axes[1].plot([0, 1], [0, 1], color=GREY, linestyle="--", linewidth=1, label="Random (AUC 0.5)")
+    axes[1].plot([divide(fp, fp + tn)], [m["recall"]], "o", color=ORANGE, markersize=8, label="Operating point")
+    axes[1].set_xlabel("False positive rate")
+    axes[1].set_ylabel("True positive rate (recall)")
+    axes[1].set_title("(b) ROC curve")
+    axes[1].legend(loc="lower right")
+
+    recall, precision = pr_points(y, risk)
+    axes[2].plot(recall, precision, color=BLUE, label="Logistic regression (AP %.3f)" % ap)
+    axes[2].axhline(divide(sum(y), len(y)), color=GREY, linestyle="--", linewidth=1,
+                    label="Random (%.3f)" % divide(sum(y), len(y)))
+    axes[2].plot([m["recall"]], [m["precision"]], "o", color=ORANGE, markersize=8, label="Operating point")
+    axes[2].set_xlabel("Recall")
+    axes[2].set_ylabel("Precision")
+    axes[2].set_ylim(0, 1.03)
+    axes[2].set_title("(c) Precision-recall curve")
+    axes[2].legend(loc="lower left", bbox_to_anchor=(0.0, 0.2))
+    fig.tight_layout()
+    return save_figure(fig, "metrics.png", show)
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_show", action="store_true")
+    args = parser.parse_args()
     if not os.path.exists(OOF_PATH):
-        print("error: %s not found. Run prediction_model.py first." % OOF_PATH)
+        print("error: %s not found, run prediction_model.py first" % OOF_PATH)
         sys.exit(1)
-
-    threshold = 0.5
-    if os.path.exists(MODEL_PATH):
-        with open(MODEL_PATH, "r") as f:
-            threshold = json.load(f).get("threshold", 0.5)
 
     rows = load_rows()
     y = []
     risk = []
+    pred = []
     rule = []
+    thresholds = set()
     runs = set()
     for r in rows:
         y.append(r["y"])
         risk.append(r["risk"])
+        pred.append(r["alarm"])
         rule.append(r["rule"])
+        thresholds.add(r["threshold"])
         runs.add(r["scenario_id"])
-
-    pred = []
-    for p in risk:
-        if p >= threshold:
-            pred.append(1)
-        else:
-            pred.append(0)
 
     tp, fp, tn, fn = count_cells(y, pred)
     total = tp + fp + tn + fn
     m = metrics_from_cells(tp, fp, tn, fn)
-
-    print("HOW GOOD IS THE LIVELOCK PREDICTION MODEL?")
-    print("=" * 78)
-    print("Every number below is computed in this file with plain Python (no numpy,")
-    print("no scikit-learn), so each one can be checked by hand.")
-    print("")
-    print("Data     : %d windows (one call edge x 2 seconds) from %d recorded runs" % (total, len(runs)))
-    print("Question : will this edge be in livelock in the next 2-12 seconds?")
-    print("Truth    : the 4-condition livelock test (labeling.py) on the windows that followed")
-    print("Model    : risk = 1 / (1 + e^-(w.x + b)), 16 features, weights in results/model.json")
-    print("Honesty  : each window's risk comes from a model that NEVER saw that run")
-    print("           (5-fold cross-validation, split by run)")
-    print("Decision : say YES (livelock coming) if risk >= %.2f" % threshold)
-    print("")
-
-    print("1. CONFUSION MATRIX (counting the %d windows into 4 boxes)" % total)
-    print("")
-    print("                               model said NO     model said YES")
-    print("   really NO   (%4d windows)    TN = %4d          FP = %4d" % (tn + fp, tn, fp))
-    print("   really YES  (%4d windows)    FN = %4d          TP = %4d" % (fn + tp, fn, tp))
-    print("")
-    print("   TP: livelock was coming and we warned      FN: livelock was coming, we missed it")
-    print("   TN: nothing was coming and we stayed quiet FP: nothing was coming, we warned anyway")
-    print("")
-
-    print("2. METRICS (formula  ->  numbers from the matrix  ->  result)")
-    print("")
-    print("   Accuracy          = (TP + TN) / all       = (%d + %d) / %d  = %s"
-          % (tp, tn, total, pct(m["accuracy"])))
-    print("   Precision         = TP / (TP + FP)        = %d / %d           = %s"
-          % (tp, tp + fp, pct(m["precision"])))
-    print("   Recall            = TP / (TP + FN)        = %d / %d           = %s"
-          % (tp, tp + fn, pct(m["recall"])))
-    print("   Specificity       = TN / (TN + FP)        = %d / %d         = %s"
-          % (tn, tn + fp, pct(m["specificity"])))
-    print("   Balanced accuracy = (Recall + Spec.) / 2  = (%.3f + %.3f) / 2 = %s"
-          % (m["recall"], m["specificity"], pct(m["balanced_accuracy"])))
-    print("   F1 score          = 2PR / (P + R)         = 2 x %.3f x %.3f / %.3f = %s"
-          % (m["precision"], m["recall"], m["precision"] + m["recall"], pct(m["f1"])))
-    print("   MCC               = (TP.TN - FP.FN) / sqrt((TP+FP)(TP+FN)(TN+FP)(TN+FN))")
-    print("                     = (%d x %d - %d x %d) / sqrt(%d x %d x %d x %d) = %.3f"
-          % (tp, tn, fp, fn, tp + fp, tp + fn, tn + fp, tn + fn, m["mcc"]))
-    print("                       (MCC runs from -1 to +1; 0 = guessing, 1 = perfect)")
-    print("")
-
     auc, pairs = roc_auc_by_hand(y, risk)
     ap = pr_auc_by_hand(y, risk)
-    print("3. RANKING QUALITY (no threshold needed)")
+
+    print("PREDICTION METRICS  |  %d out-of-fold windows from %d runs  |  threshold %.2f-%.2f (nested CV)"
+          % (total, len(runs), min(thresholds), max(thresholds)))
     print("")
-    print("   ROC-AUC = share of (livelock, no-livelock) window pairs where the")
-    print("             livelock window got the higher risk = %.3f   (%d pairs checked)" % (auc, pairs))
-    print("   PR-AUC  = area under the precision-recall curve  = %.3f   (random guess: %.3f)"
-          % (ap, divide(sum(y), len(y))))
+    print("Table 1. Confusion matrix")
+    header = "%-14s %14s %14s %10s" % ("", "Predicted NO", "Predicted YES", "Total")
+    print(header)
+    print("-" * len(header))
+    print("%-14s %14s %14s %10d" % ("Actual NO", "TN = %d" % tn, "FP = %d" % fp, tn + fp))
+    print("%-14s %14s %14s %10d" % ("Actual YES", "FN = %d" % fn, "TP = %d" % tp, fn + tp))
+    print("%-14s %14d %14d %10d" % ("Total", tn + fn, fp + tp, total))
+    print("")
+
+    print("Table 2. Metrics")
+    header = "%-18s %-26s %-44s %9s" % ("Metric", "Formula", "Computation", "Value")
+    print(header)
+    print("-" * len(header))
+    print("%-18s %-26s %-44s %9s" % ("Accuracy", "(TP+TN) / N", "(%d+%d) / %d" % (tp, tn, total),
+                                      pct(m["accuracy"])))
+    print("%-18s %-26s %-44s %9s" % ("Precision", "TP / (TP+FP)", "%d / %d" % (tp, tp + fp), pct(m["precision"])))
+    print("%-18s %-26s %-44s %9s" % ("Recall", "TP / (TP+FN)", "%d / %d" % (tp, tp + fn), pct(m["recall"])))
+    print("%-18s %-26s %-44s %9s" % ("Specificity", "TN / (TN+FP)", "%d / %d" % (tn, tn + fp),
+                                      pct(m["specificity"])))
+    print("%-18s %-26s %-44s %9s" % ("Balanced accuracy", "(Recall+Specificity) / 2",
+                                      "(%.3f+%.3f) / 2" % (m["recall"], m["specificity"]),
+                                      pct(m["balanced_accuracy"])))
+    print("%-18s %-26s %-44s %9s" % ("F1", "2PR / (P+R)",
+                                      "2(%.3f)(%.3f) / %.3f" % (m["precision"], m["recall"],
+                                                                m["precision"] + m["recall"]), pct(m["f1"])))
+    print("%-18s %-26s %-44s %9.3f" % ("MCC", "(TP.TN-FP.FN) / sqrt(...)",
+                                        "(%dx%d-%dx%d) / sqrt(%dx%dx%dx%d)" % (tp, tn, fp, fn, tp + fp, tp + fn,
+                                                                                tn + fp, tn + fn), m["mcc"]))
+    print("%-18s %-26s %-44s %9.3f" % ("ROC-AUC", "P(risk+ > risk-)", "%d pairs" % pairs, auc))
+    print("%-18s %-26s %-44s %9.3f" % ("PR-AUC", "sum dRecall x Precision", "%d windows" % total, ap))
     print("")
 
     always_no = metrics_from_cells(0, 0, tn + fp, fn + tp)
     rtp, rfp, rtn, rfn = count_cells(y, rule)
     r = metrics_from_cells(rtp, rfp, rtn, rfn)
-    print("4. WHY WE DO NOT LOOK AT ACCURACY ALONE")
+    print("Table 3. Comparison")
+    header = "%-22s %8s %8s %8s %8s %8s %8s" % ("Method", "Acc", "BalAcc", "Prec", "Recall", "F1", "MCC")
+    print(header)
+    print("-" * len(header))
+    for name, x in [("Logistic regression", m), ("Reactive rule", r), ("Always NO", always_no)]:
+        print("%-22s %8s %8s %8s %8s %8s %8.3f" % (name, pct(x["accuracy"]), pct(x["balanced_accuracy"]),
+                                                    pct(x["precision"]), pct(x["recall"]), pct(x["f1"]), x["mcc"]))
     print("")
-    print("   Only %.0f%% of windows are YES, so a 'model' that always says NO is" % (100.0 * divide(sum(y), len(y))))
-    print("   already %.1f%% accurate. Balanced accuracy, recall, F1 and MCC show the real gap:" % (100.0 * always_no["accuracy"]))
-    print("")
-    print("   %-36s %9s %9s %8s %8s %7s" % ("", "accuracy", "bal.acc", "recall", "F1", "MCC"))
-    print("   %-36s %9s %9s %8s %8s %7.2f" % ("our model", pct(m["accuracy"]), pct(m["balanced_accuracy"]),
-                                             pct(m["recall"]), pct(m["f1"]), m["mcc"]))
-    print("   %-36s %9s %9s %8s %8s %7.2f" % ("simple rule (rho > 1 and overload)", pct(r["accuracy"]),
-                                             pct(r["balanced_accuracy"]), pct(r["recall"]), pct(r["f1"]), r["mcc"]))
-    print("   %-36s %9s %9s %8s %8s %7.2f" % ("always say NO", pct(always_no["accuracy"]),
-                                             pct(always_no["balanced_accuracy"]), pct(always_no["recall"]),
-                                             pct(always_no["f1"]), always_no["mcc"]))
-    print("")
-    print("SUMMARY: accuracy %.1f%%, balanced accuracy %.1f%%, recall %.1f%%, F1 %.1f%%, MCC %.2f"
-          % (100 * m["accuracy"], 100 * m["balanced_accuracy"], 100 * m["recall"], 100 * m["f1"], m["mcc"]))
-    print("(full evaluation with confidence intervals and run-time cost: python evaluate_model.py)")
+    draw((tp, fp, tn, fn), y, risk, m, auc, ap, not args.no_show)
 
 
 if __name__ == "__main__":

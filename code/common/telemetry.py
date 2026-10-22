@@ -7,18 +7,6 @@ import time
 from common.config import DATA_DIR
 from common.safe_files import remove_file
 
-# One JSON object per line ("JSON Lines"). Each process only ever appends
-# to its own files, so two processes never write to the same file.
-#
-#   telemetry_<caller>.jsonl  one line per call ATTEMPT made by that service
-#                             (written by the caller, so retries are visible)
-#   server_<service>.jsonl    one line per request a service RECEIVED
-#                             (queue wait, service time, was it orphaned?)
-#   user_requests.jsonl       one line per user checkout, and whether the
-#                             user actually got a success
-#   scenarios.jsonl           one line per scenario run: its settings and
-#                             the exact start/end time of every phase
-#   controller_log.jsonl      every decision the retry controller made
 
 USER_LOG_NAME = "user_requests.jsonl"
 SCENARIO_LOG_NAME = "scenarios.jsonl"
@@ -116,7 +104,18 @@ def log_controller_decision(record):
     append_record(data_path(CONTROLLER_LOG_NAME), record)
 
 
-def read_jsonl(path):
+SCENARIO_KEY = '"scenario_id": "'
+
+
+def scenario_of_line(line):
+    start = line.find(SCENARIO_KEY)
+    if start < 0:
+        return None
+    start = start + len(SCENARIO_KEY)
+    return line[start:line.find('"', start)]
+
+
+def read_jsonl(path, wanted=None):
     records = []
     skipped = 0
 
@@ -128,10 +127,11 @@ def read_jsonl(path):
             line = line.strip()
             if line == "":
                 continue
+            if wanted is not None and scenario_of_line(line) not in wanted:
+                continue
             try:
                 records.append(json.loads(line))
             except ValueError:
-                # a line cut short by a crash or Ctrl+C. skip it, count it.
                 skipped = skipped + 1
 
     return records, skipped
@@ -155,8 +155,11 @@ def keep_scenarios(records, scenario_ids):
 def read_many(pattern, scenario_ids=None):
     records = []
     skipped = 0
+    wanted = None
+    if scenario_ids is not None:
+        wanted = set(scenario_ids)
     for path in sorted(glob.glob(data_path(pattern))):
-        part, part_skipped = read_jsonl(path)
+        part, part_skipped = read_jsonl(path, wanted)
         records.extend(part)
         skipped = skipped + part_skipped
 
@@ -166,9 +169,6 @@ def read_many(pattern, scenario_ids=None):
 
 
 def within_run(records, manifest, time_key="timestamp"):
-    # keep only records from THIS run of the scenario. If a run was stopped
-    # half way and re-run under the same id, the old run's records lie
-    # before this run's start time and are dropped here.
     first = manifest["start"] - 2.0
     last = manifest["end"] + 90.0
     kept = []
@@ -220,12 +220,6 @@ def reset_logs():
             remove_file(path)
 
 
-# ---- reading only the NEW lines of the call logs (used by the controller) ----
-#
-# The controller looks at the logs every second. Re-reading whole files
-# every second gets slower as they grow, so instead we remember how far we
-# got in each file and only read what was appended since.
-
 def make_tail_state(start_at_end):
     state = {"offsets": {}, "partial": {}}
     if start_at_end:
@@ -248,15 +242,12 @@ def read_new_call_records(state):
             continue
 
         if size < offset:
-            # the file was reset (deleted and started again)
             offset = 0
             partial = b""
 
         if size == offset:
             continue
 
-        # binary mode, so byte offsets are exact on Windows too
-        # (text mode turns \r\n into \n and the offsets stop matching)
         try:
             with open(path, "rb") as f:
                 f.seek(offset)
@@ -267,8 +258,6 @@ def read_new_call_records(state):
 
         data = partial + chunk
         lines = data.split(b"\n")
-        # the last piece has no newline yet: the writer is mid-line.
-        # keep it and finish it next time.
         partial = lines[-1]
         for line in lines[:-1]:
             line = line.strip()

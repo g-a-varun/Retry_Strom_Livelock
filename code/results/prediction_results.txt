@@ -1,55 +1,57 @@
-Livelock prediction -- will this edge be in livelock in the next 2-12 seconds?
-==============================================================================
-examples: 1458 (edge x 2s window) from 28 scenarios, 216 positive (14.8%)
-evaluation: 5-fold cross-validation grouped by scenario (test runs never seen in training)
+LIVELOCK PREDICTION  |  horizon 2-12 s  |  5-fold grouped CV  |  28 runs, 1458 windows, 216 positive (14.8%)
 
-ALL WINDOWS
-  method                                   precision  recall     f1  PR-AUC    f1 per fold
-  logistic regression (ours)                    0.68    0.85   0.75    0.84  0.75 +/- 0.06
-    - without graph features                    0.66    0.84   0.74    0.80  0.73 +/- 0.07
-    - without temporal features                 0.66    0.85   0.75    0.84  0.73 +/- 0.08
-  random forest (comparison)                    0.76    0.84   0.80    0.88  0.79 +/- 0.08
-  shuffled-label control                        0.09    0.29   0.14    0.14  0.14 +/- 0.05
-  rule: storm right now (reactive)              0.72    0.52   0.60     -                -
-  rule: livelock right now (persistence)        0.87    0.38   0.53     -                -
-  chance level (PR-AUC of a random guess) = 0.15
+Table 1. All windows
+Method                          Acc     Prec   Recall       F1      MCC   PR-AUC
+--------------------------------------------------------------------------------
+Logistic regression           0.941    0.807    0.792    0.799    0.765    0.853
+  w/o graph features          0.924    0.718    0.801    0.757    0.714    0.812
+  w/o temporal features       0.940    0.809    0.782    0.795    0.761    0.846
+Random forest                 0.941    0.825    0.764    0.793    0.760    0.883
+Shuffled labels               0.160    0.130    0.819    0.224   -0.195    0.121
+Reactive rule                 0.898    0.715    0.523    0.604    0.556        -
+Persistence rule              0.901    0.874    0.384    0.534    0.539        -
 
-ONSET ONLY -- edge is NOT in livelock now; will it be soon? (1341 examples, 123 positive)
-  method                                   precision  recall     f1  PR-AUC
-  logistic regression (ours)                    0.58    0.76   0.66    0.74
-    - without graph features                    0.55    0.73   0.63    0.63
-    - without temporal features                 0.55    0.76   0.64    0.73
-  random forest (comparison)                    0.68    0.73   0.70    0.79
-  shuffled-label control                        0.06    0.34   0.11    0.09
-  rule: storm right now (reactive)              0.50    0.24   0.32     -  
-  rule: livelock right now (persistence)        0.00    0.00   0.00     -  
+Table 2. Onset windows (n = 1341, positive = 123)
+Method                          Acc     Prec   Recall       F1      MCC   PR-AUC
+--------------------------------------------------------------------------------
+Logistic regression           0.950    0.746    0.691    0.717    0.691    0.779
+  w/o graph features          0.930    0.604    0.683    0.641    0.604    0.700
+  w/o temporal features       0.949    0.741    0.675    0.706    0.679    0.780
+Random forest                 0.949    0.765    0.634    0.693    0.669    0.786
+Shuffled labels               0.116    0.082    0.854    0.150   -0.139    0.072
+Reactive rule                 0.908    0.500    0.236    0.320    0.301        -
+Persistence rule              0.908    0.000    0.000    0.000    0.000        -
 
-EARLY WARNING -- 30 livelock episodes in the data
-  our model                warned before onset in 30/30 episodes, median warning 8.0s ahead (range 2-10s)
-                           alarms during healthy traffic: 8 of 576 windows (1.4%)
-  reactive rule            warned before onset in 24/30 episodes, median warning 2.0s ahead (range 2-10s)
-                           alarms during healthy traffic: 0 of 576 windows (0.0%)
+Table 3. Early warning (30 livelock episodes)
+Method                       Warned   Median (s)  Range (s)   Healthy alarms
+----------------------------------------------------------------------------
+Logistic regression           30/30          8.0       2-10            0/576
+Reactive rule                 24/30          2.0       2-10            0/576
 
-confusion matrix of our model, all windows [[TN, FP], [FN, TP]]: [[1156, 86], [33, 183]]
+Confusion matrix (logistic regression):  TN = 1201   FP = 41   FN = 45   TP = 171
+Decision threshold (nested CV, per fold): 0.70, 0.80, 0.75, 0.70, 0.65
+Final model: 18 features, threshold 0.65, trained on 1458 windows -> results/model.json
+Self-check |p(own code) - p(scikit-learn)| max = 5.6e-16
 
-final model trained on all 1458 examples, saved to results/model.json
-self-check: hand-computed risk vs scikit-learn, largest difference = 3.33e-16 (OK)
-
-what the model looks at (weight on the standardised feature;
-positive = pushes towards 'livelock coming'):
-  fail_ratio               +1.890
-  overload_ratio           -1.647
-  concurrency_ratio        +1.528
-  down_max_latency_ratio   +1.521
-  edge_gateway_order       +0.862
-  down_max_overload        -0.840
-  edge_order_payment       -0.793
-  latency_ratio            -0.601
-  d_latency_ratio          +0.507
-  up_overload_ratio        -0.437
-  down_max_fail_ratio      -0.364
-  d_fail_ratio             +0.199
-  rho                      -0.127
-  d_rho                    +0.077
-  edge_order_inventory     -0.069
-  up_rho                   +0.027
+Table 4. Standardised weights (final model)
+Feature                        Weight
+-------------------------------------
+log_concurrency_ratio          +1.933
+useful_ratio                   -1.782
+log_latency_ratio              -1.392
+overload_ratio                 -1.209
+log_down_max_latency_ratio     +0.935
+rho                            +0.800
+edge_gateway_order             +0.777
+edge_order_payment             -0.744
+d_concurrency_ratio            +0.660
+up_overload_ratio              -0.645
+down_max_fail_ratio            -0.557
+down_max_overload              -0.466
+d_fail_ratio                   +0.251
+d_rho                          -0.211
+d_latency_ratio                -0.134
+fail_ratio                     +0.115
+edge_order_inventory           -0.033
+up_rho                         -0.030
+(intercept)                    -1.991

@@ -37,8 +37,6 @@ def checkout():
 
     change_counter("inflight", 1)
     try:
-        # the gateway has no slot limit: it accepts everything and passes
-        # it on, like an API gateway / load balancer in front of a service
         order_ok = call_with_retry(SERVICE_NAME, "order_service", ORDER_URL,
                                    scenario_id, run_type)
         status = 200 if order_ok else 502

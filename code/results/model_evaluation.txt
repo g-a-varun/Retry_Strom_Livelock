@@ -1,111 +1,113 @@
-Model evaluation -- out-of-fold scores (each window scored by a model that never saw its scenario)
-====================================================================================================
-windows: 1458, livelock coming in 216 (14.8%); before onset: 1341 windows, 123 positive
-threshold for the yes/no metrics: 0.50 (fixed in advance, not tuned)
+MODEL EVALUATION  |  out-of-fold scores  |  1458 windows (216 positive)  |  onset: 1341 windows (123 positive)
 
-1. ALL WINDOWS
-  method                                       acc bal.acc    prec  recall    spec      F1      F2     MCC   kappa ROC-AUC  PR-AUC
-  logistic regression (ours)                  0.92    0.89    0.68    0.85    0.93    0.75    0.81    0.71    0.71    0.95    0.84
-    - without graph features                  0.91    0.88    0.66    0.84    0.93    0.74    0.80    0.70    0.69    0.95    0.80
-    - without temporal features               0.91    0.89    0.66    0.85    0.93    0.75    0.81    0.70    0.70    0.95    0.84
-  random forest (comparison)                  0.94    0.90    0.76    0.84    0.95    0.80    0.82    0.76    0.76    0.95    0.88
-  shuffled-label control                      0.47    0.40    0.09    0.29    0.50    0.14    0.20   -0.15   -0.11    0.31    0.14
-  rule: storm right now (reactive)            0.90    0.74    0.72    0.52    0.96    0.60    0.55    0.56    0.55       -       -
-  rule: livelock right now (persistence)      0.90    0.69    0.87    0.38    0.99    0.53    0.43    0.54    0.49       -       -
-  our model's confusion matrix: TP 183  FP 86  TN 1156  FN 33
-  bal.acc = average of recall and specificity (not fooled by the rare class);
-  F2 = like F1 but recall counts double; MCC and kappa: 0 = guessing, 1 = perfect;
-  ROC-AUC / PR-AUC: quality of the ranking of the risk scores, no threshold needed
+Table 1. All windows
+Method                         Acc  BalAcc    Prec  Recall    Spec      F1      F2     MCC   Kappa ROC-AUC  PR-AUC
+------------------------------------------------------------------------------------------------------------------
+Logistic regression          0.941   0.879   0.807   0.792   0.967   0.799   0.795   0.765   0.765   0.954   0.853
+  w/o graph features         0.924   0.873   0.718   0.801   0.945   0.757   0.783   0.714   0.712   0.950   0.812
+  w/o temporal features      0.940   0.875   0.809   0.782   0.968   0.795   0.788   0.761   0.760   0.954   0.846
+Random forest                0.941   0.868   0.825   0.764   0.972   0.793   0.775   0.760   0.759   0.952   0.883
+Shuffled labels              0.160   0.432   0.130   0.819   0.045   0.224   0.397  -0.195  -0.042   0.334   0.121
+Reactive rule                0.898   0.743   0.715   0.523   0.964   0.604   0.553   0.556   0.548       -       -
+Persistence rule             0.901   0.687   0.874   0.384   0.990   0.534   0.433   0.539   0.487       -       -
 
-2. BEFORE ONSET ONLY (edge not in livelock now; will it be soon?)
-  method                                       acc bal.acc    prec  recall    spec      F1      F2     MCC   kappa ROC-AUC  PR-AUC
-  logistic regression (ours)                  0.93    0.85    0.58    0.76    0.94    0.66    0.72    0.63    0.62    0.93    0.74
-    - without graph features                  0.92    0.84    0.55    0.73    0.94    0.63    0.69    0.59    0.58    0.92    0.63
-    - without temporal features               0.92    0.85    0.55    0.76    0.94    0.64    0.70    0.61    0.60    0.93    0.73
-  random forest (comparison)                  0.94    0.85    0.68    0.73    0.96    0.70    0.72    0.67    0.67    0.92    0.79
-  shuffled-label control                      0.48    0.42    0.06    0.34    0.49    0.11    0.18   -0.09   -0.06    0.35    0.09
-  rule: storm right now (reactive)            0.91    0.61    0.50    0.24    0.98    0.32    0.26    0.30    0.28       -       -
-  rule: livelock right now (persistence)      0.91    0.50    0.00    0.00    1.00    0.00    0.00    0.00    0.00       -       -
+Table 2. Onset windows
+Method                         Acc  BalAcc    Prec  Recall    Spec      F1      F2     MCC   Kappa ROC-AUC  PR-AUC
+------------------------------------------------------------------------------------------------------------------
+Logistic regression          0.950   0.834   0.746   0.691   0.976   0.717   0.701   0.691   0.690   0.935   0.779
+  w/o graph features         0.930   0.819   0.604   0.683   0.955   0.641   0.666   0.604   0.603   0.928   0.700
+  w/o temporal features      0.949   0.825   0.741   0.675   0.976   0.706   0.687   0.679   0.678   0.933   0.780
+Random forest                0.949   0.807   0.765   0.634   0.980   0.693   0.657   0.669   0.666   0.925   0.786
+Shuffled labels              0.116   0.447   0.082   0.854   0.041   0.150   0.297  -0.139  -0.020   0.344   0.072
+Reactive rule                0.908   0.606   0.500   0.236   0.976   0.320   0.264   0.301   0.278       -       -
+Persistence rule             0.908   0.500   0.000   0.000   1.000   0.000   0.000   0.000   0.000       -       -
 
-self-check: hand-written MCC / kappa / accuracy vs scikit-learn, largest difference = 1.1e-16 (OK)
+Table 3. Calibration
+Method                        Brier      BSS   LogLoss      ECE
+---------------------------------------------------------------
+Logistic regression           0.064    0.493     0.240    0.093
+  w/o graph features          0.069    0.454     0.259    0.101
+  w/o temporal features       0.064    0.492     0.239    0.095
+Random forest                 0.055    0.564     0.201    0.075
+Shuffled labels               0.265   -1.103     0.726    0.367
 
-3. CALIBRATION (does the risk mean what it says?)
-  method                                      Brier  Brier skill  log loss     ECE
-  logistic regression (ours)                  0.072         0.43     0.261   0.103
-    - without graph features                  0.080         0.37     0.289   0.113
-    - without temporal features               0.074         0.41     0.266   0.106
-  random forest (comparison)                  0.056         0.56     0.203   0.079
-  shuffled-label control                      0.264        -1.09     0.723   0.376
-  (Brier skill: 1 = perfect, 0 = no better than always saying the base rate)
-  The model is trained with class_weight='balanced', which on purpose makes the rare
-  livelock class count more. That pushes the risk values up (in the table below, a risk
-  of 0.5-0.9 is followed by livelock only 35-53% of the time). The ORDER of the scores
-  is not affected (ROC-AUC 0.95), and the 0.5 threshold was fixed for this model.
-  reliability table, our model:
-    risk bin     windows    mean risk   livelock really came
-    0.0 - 0.1        819         0.04                     0%
-    0.1 - 0.2        102         0.13                     2%
-    0.2 - 0.3         81         0.27                     5%
-    0.3 - 0.4        125         0.35                    12%
-    0.4 - 0.5         62         0.44                    13%
-    0.5 - 0.6         31         0.55                    35%
-    0.6 - 0.7         22         0.66                    45%
-    0.7 - 0.8         32         0.75                    41%
-    0.8 - 0.9         34         0.85                    53%
-    0.9 - 1.0        150         0.98                    87%
+Table 4. Reliability (logistic regression)
+Risk bin    Windows     Mean p   Observed
+-----------------------------------------
+0.0-0.1         816      0.029      0.006
+0.1-0.2         135      0.137      0.007
+0.2-0.3         100      0.255      0.100
+0.3-0.4          93      0.347      0.097
+0.4-0.5          60      0.443      0.117
+0.5-0.6          17      0.542      0.176
+0.6-0.7          23      0.644      0.391
+0.7-0.8          17      0.747      0.412
+0.8-0.9          30      0.845      0.700
+0.9-1.0         167      0.976      0.862
 
-4. HOW SURE ARE WE? 95% bootstrap intervals (1000 rounds, whole scenarios resampled)
-  quantity                                          value           95% interval
-  F1, all windows                                    0.75       0.64 to 0.83    
-  MCC, all windows                                   0.71       0.61 to 0.79    
-  ROC-AUC, all windows                               0.95       0.90 to 0.98    
-  PR-AUC, all windows                                0.84       0.75 to 0.91    
-  F1, before onset                                   0.66       0.53 to 0.76    
-  PR-AUC, before onset                               0.74       0.61 to 0.84    
-  F1 gain over the reactive rule, all                0.15       0.07 to 0.22      (above 0: real)
-  F1 gain over the reactive rule, before onset       0.34       0.23 to 0.42      (above 0: real)
-  PR-AUC gain from graph features, before onset      0.10       0.02 to 0.19      (above 0: real)
-  PR-AUC gap to the random forest, all              -0.04      -0.07 to -0.02     (below 0: real)
+Table 5. 95% bootstrap intervals (1000 resamples of whole runs)
+Quantity                        Value      Low     High
+-------------------------------------------------------
+Accuracy                        0.941    0.922    0.960
+Precision                       0.807    0.687    0.884
+Recall                          0.792    0.712    0.871
+F1                              0.799    0.721    0.860
+MCC                             0.765    0.681    0.834
+ROC-AUC                         0.954    0.904    0.979
+PR-AUC                          0.853    0.769    0.913
+F1, onset                       0.717    0.613    0.797
+PR-AUC, onset                   0.779    0.655    0.870
+F1 gain vs reactive rule        0.195    0.156    0.234
+F1 gain vs reactive, onset      0.397    0.336    0.453
+PR-AUC gain, graph, onset       0.080    0.018    0.158
+PR-AUC gap vs forest           -0.031   -0.054   -0.009
 
-5. MOVING THE THRESHOLD (our model)
-  threshold  precision  recall     F1    MCC    FPR   healthy alarms warned (median)
-        0.1       0.33    0.98   0.50   0.46   0.34            41.5%    30/30 (10s)
-        0.2       0.39    0.97   0.56   0.52   0.26            33.3%    30/30 (10s)
-        0.3       0.45    0.95   0.61   0.58   0.20            25.2%    30/30 (10s)
-        0.4       0.58    0.88   0.70   0.65   0.11             8.2%    30/30 (9s)
-        0.5       0.68    0.85   0.75   0.71   0.07             1.4%    30/30 (8s)   <- used
-        0.6       0.72    0.80   0.76   0.71   0.05             0.2%    30/30 (8s)
-        0.7       0.75    0.75   0.75   0.71   0.04             0.2%    30/30 (8s)
-        0.8       0.81    0.69   0.74   0.71   0.03             0.0%    29/30 (8s)
-        0.9       0.87    0.61   0.72   0.69   0.02             0.0%    23/30 (6s)
-  best F1 on these same scores is at 0.6 (F1 0.76). We keep 0.5: picking the threshold
-  on the data you report on would make the number look better than it really is.
+Table 6. Threshold sweep (logistic regression)
+Thr        Acc    Prec  Recall      F1     MCC     FPR  Healthy%   Warned  Lead(s)
+----------------------------------------------------------------------------------
+0.10     0.701   0.329   0.977   0.492   0.451   0.347      41.7    30/30       10
+0.20     0.792   0.414   0.972   0.581   0.547   0.239      29.5    30/30       10
+0.30     0.847   0.491   0.926   0.642   0.601   0.167      17.2    30/30       10
+0.40     0.898   0.608   0.884   0.721   0.679   0.099       5.7    30/30        9
+0.50     0.930   0.724   0.852   0.783   0.745   0.056       0.2    30/30        8
+0.60     0.938   0.764   0.838   0.799   0.763   0.045       0.0    30/30        8
+0.65     0.942   0.797   0.819   0.808   0.774   0.036       0.0    30/30        8 *
+0.70     0.941   0.804   0.796   0.800   0.765   0.034       0.0    30/30        8
+0.80     0.943   0.838   0.764   0.799   0.767   0.026       0.0    30/30        8
+0.90     0.935   0.862   0.667   0.752   0.723   0.019       0.0    25/30        8
 
-6. WHERE IT WORKS (our model, all windows)
-  group                                       windows  positive  precision  recall     F1    MCC  ROC-AUC
-  edge gateway->order_service                     486       185       0.72    0.89   0.80   0.66     0.91
-  edge order_service->payment_service             486         5       0.07    0.20   0.11   0.10     0.32
-  edge order_service->inventory_service           486        26       0.64    0.69   0.67   0.65     0.98
-  error fault                                     549        71       0.48    0.77   0.59   0.54     0.87
-  latency fault                                   729       145       0.86    0.88   0.87   0.84     0.98
-  no fault (control)                              180         0   false alarms: 6 of 180 windows (3.3%)
-  short slot wait (1 s)                           768        87       0.54    0.75   0.62   0.58     0.90
-  long slot wait (4-10 s)                         690       129       0.80    0.91   0.85   0.82     0.99
-  order_service->payment_service has only 5 positive windows: too few to judge that edge.
+Table 7. Breakdown (logistic regression)
+Group                       Windows Positive    Prec  Recall      F1     MCC  ROC-AUC    FP
+-------------------------------------------------------------------------------------------
+gateway->order                  486      185   0.832   0.859   0.846   0.749    0.914    32
+order->payment                  486        5   0.250   0.200   0.222   0.216    0.364     3
+order->inventory                486       26   0.647   0.423   0.512   0.502    0.972     6
+Error fault                     549       71   0.614   0.606   0.610   0.552    0.881    27
+Latency fault                   729      145   0.901   0.883   0.892   0.866    0.982    14
+No fault                        180        0       -       -       -       -        -     0
+Slot wait 1 s                   768       87   0.632   0.690   0.659   0.614    0.908    35
+Slot wait 4-10 s                690      129   0.949   0.860   0.902   0.883    0.987     6
 
-7. RUN-TIME COST (measured on this machine; the controller runs every 1 s)
-  risk for one edge, hand-written sigmoid (what the controller uses)        5.2 us
-  same model through scikit-learn predict_proba, one window             107.0 us
-  random forest (200 trees) predict_proba, one window                 12837.3 us
-  features for one tick (all 3 edges)                                    12.8 us
-  one whole controller round (3 edges: features, risk, decision)        30.3 us = 0.003% of the 1 s tick
-  training time on all 1458 windows: logistic regression 15 ms, random forest 449 ms
-  model size: logistic regression = 49 numbers (model.json 2231 bytes);
-              random forest = 200 trees, 11938 nodes, 1005 KB pickled
+Table 8. Run-time cost
+Item                                                  Value
+-----------------------------------------------------------
+Risk, one edge (own code)                            3.1 us
+Risk, one window (scikit-learn)                    104.7 us
+Random forest, one window                         6855.4 us
+Features, one tick (3 edges)                        13.5 us
+Controller round (3 edges)                          28.9 us
+CPU share of the 1 s control period                0.0029 %
+Training, logistic regression                         12 ms
+Training, random forest                              218 ms
+Model size, logistic regression (numbers)                56
+model.json                                       2444 bytes
+Random forest (trees / nodes)                    100 / 6012
+Random forest, pickled                               512 KB
 
-8. THE SHUFFLED-LABEL CONTROL, REPEATED 20 TIMES (a model with no real signal)
-  ROC-AUC: mean 0.48, range 0.36-0.63   (ours 0.95)
-  PR-AUC:  mean 0.24, range 0.15-0.38   (ours 0.84, chance 0.15)
-  shuffled runs that reached our PR-AUC: 0 of 20
-  (a model with random weights can land on either side of ROC-AUC 0.5, because the
-  features are strongly tied to livelock; it never gets close to our model)
+Table 9. Shuffled-label control (20 repeats)
+Metric         Mean      Min      Max     Ours
+----------------------------------------------
+ROC-AUC       0.483    0.358    0.617    0.954
+PR-AUC        0.221    0.121    0.332    0.853
+
+Self-check |MCC, kappa, accuracy (own code) - scikit-learn| max = 1.1e-16

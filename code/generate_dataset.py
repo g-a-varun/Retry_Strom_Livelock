@@ -11,23 +11,6 @@ from common.telemetry import scenarios_in_group
 from run_all import wait_until_idle
 import scenario_runner
 
-# Builds the training dataset: many scenario runs with randomly drawn
-# settings, so the model sees many different storms instead of one
-# repeated demo. Every setting is drawn from a seeded random generator,
-# so the same --seed always gives the same list of scenarios.
-#
-# What is varied, and why:
-#   fault kind      latency (service gets slow) or error (service fails fast)
-#   target          payment_service or inventory_service
-#   order queue     1s (short, rejects fast) or 4-10s (long, like a big
-#                   thread-pool queue). Long queues allow the storm to
-#                   outlive the fault.
-#   load            12-22 users/sec
-#   fault shape     mostly gradual ramps (something to predict), some
-#                   sudden spikes
-#   severity        peak latency 500-900 ms, peak error rate 0.6-0.9
-# Plus control runs with NO fault (normal load and high load), to check
-# that the detector does not fire on a system that is merely busy.
 
 GROUP = "dataset"
 
@@ -138,7 +121,6 @@ def main():
               % (n + 1, len(plan), params["scenario_id"], params["mode"], params["fault"],
                  params["target"], params["rps"], params["queue_wait"]))
 
-        # every dataset run uses the default static retry policy
         reset_policy()
         scenario_args = scenario_runner.parse_args(to_argv(params))
         problems = scenario_runner.check_args(scenario_args)

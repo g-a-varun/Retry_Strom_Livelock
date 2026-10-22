@@ -1,25 +1,25 @@
-Livelock detection -- group 'experiment'
-========================================
-scenarios: 50   windows (edge x 2s): 3825   labelled livelock: 118
+LIVELOCK DETECTION  |  group experiment  |  50 runs  |  3825 windows (edge x 2 s)  |  108 livelock
 
-livelock windows by edge and phase (livelock / total)
-  edge                                        normal          ramp         fault      recovery
-  gateway->order_service                     0 / 250       8 / 250      39 / 250      51 / 475
-  order_service->payment_service             0 / 250       0 / 250      15 / 250       0 / 475
-  order_service->inventory_service           0 / 250       0 / 250       0 / 250       0 / 475
+Table 1. Livelock windows / windows, by edge and phase
+Edge                     Normal       Ramp      Fault   Recovery
+----------------------------------------------------------------
+gateway->order            0/250      8/250     36/250     48/475
+order->payment            0/250      0/250     12/250      0/475
+order->inventory          0/250      0/250      0/250      0/475
 
-false alarms during healthy traffic (normal phase): 0 of 750 windows
-users who arrived in a window flagged livelock on any edge got a success 9.7% of the time
-users who arrived in any other fault/recovery window got a success 47.9% of the time
+False alarms (normal phase): 0/750 windows
+User success: livelock windows 7.8%  |  other ramp/fault/recovery windows 48.3%
 
-livelock windows per experiment and retry strategy (all repetitions together)
-  error_burst_no_retry              0 windows, livelock formed in 0 of 5 runs
-  error_burst_predictive            4 windows, livelock formed in 3 of 5 runs
-  error_burst_reactive              2 windows, livelock formed in 1 of 5 runs
-  error_burst_retry_budget          0 windows, livelock formed in 0 of 5 runs
-  error_burst_static_retry         15 windows, livelock formed in 5 of 5 runs
-  metastable_no_retry               0 windows, livelock formed in 0 of 5 runs
-  metastable_predictive             0 windows, livelock formed in 0 of 5 runs
-  metastable_reactive              12 windows, livelock formed in 5 of 5 runs
-  metastable_retry_budget           0 windows, livelock formed in 0 of 5 runs
-  metastable_static_retry          85 windows, livelock formed in 5 of 5 runs
+Table 2. Livelock by experiment and strategy
+Experiment / strategy                 Windows     Runs with LL
+--------------------------------------------------------------
+error_burst_no_retry                        0              0/5
+error_burst_predictive                      7              3/5
+error_burst_reactive                        1              1/5
+error_burst_retry_budget                    0              0/5
+error_burst_static_retry                    8              3/5
+metastable_no_retry                         0              0/5
+metastable_predictive                       1              1/5
+metastable_reactive                        12              5/5
+metastable_retry_budget                     0              0/5
+metastable_static_retry                    79              5/5

@@ -10,30 +10,12 @@ from common.config import RESULTS_DIR, DEFAULT_SLOTS, DEFAULT_SERVICE_CONFIGS, m
 from common.telemetry import (read_call_records, read_user_records, read_server_records,
                               read_scenarios, within_run)
 
-# "Why should anyone trust a dataset you generated yourself?"
-#
-# Because it can be checked. This script tests the generated logs against
-# things that MUST be true if the testbed behaves like a real system:
-#
-#  1. nothing is lost: every user request, every gateway call and every
-#     downstream call is accounted for (exact bookkeeping identities)
-#  2. retries follow the rules: attempts are numbered 1,2,3 in order and
-#     never exceed the policy in force
-#  3. queueing theory: a service with c slots can never be more than 100%
-#     busy (Utilization Law, U = X * S / c <= 1), and when it saturates its
-#     throughput equals c / (mean service time)
-#  4. the fault injector does what it was told (measured latency / error
-#     rate during the fault matches the configured values)
-#  5. the load generator sends the rate it was asked to
-#  6. timestamps are consistent (no call ends before it starts)
-#
-# Results go to results/data_validation.txt as PASS / FAIL lines.
 
 WINDOW_SEC = 2.0
 
 
-def check(lines, ok, text):
-    lines.append("  [%s] %s" % ("PASS" if ok else "FAIL", text))
+def check(lines, ok, group, name, value):
+    lines.append("%-16s %-46s %-14s %s" % (group, name, value, "PASS" if ok else "FAIL"))
     return ok
 
 
@@ -55,7 +37,6 @@ def phase_bounds(manifest, name):
 
 
 def bookkeeping(lines, manifests, users_by, calls_by, servers_by):
-    lines.append("1. Bookkeeping -- nothing lost, nothing invented")
     all_ok = True
     worst_user_gap = 0
     worst_edge_gap = 0
@@ -65,7 +46,6 @@ def bookkeeping(lines, manifests, users_by, calls_by, servers_by):
         calls = calls_by.get(sid, [])
         servers = servers_by.get(sid, [])
 
-        # every request the load generator sent was logged as a user request
         gap = abs(manifest["requests_sent"] - len(users))
         if gap > worst_user_gap:
             worst_user_gap = gap
@@ -83,9 +63,6 @@ def bookkeeping(lines, manifests, users_by, calls_by, servers_by):
             if record["attempt_number"] == 1:
                 first_calls[record["dest_service"]] = first_calls[record["dest_service"]] + 1
 
-        # each request the gateway received made exactly ONE first attempt
-        # to order_service; each order that did its own work successfully
-        # made exactly one first attempt to payment and one to inventory
         gaps = [abs(gateway_received - first_calls["order_service"]),
                 abs(order_did_downstream - first_calls["payment_service"]),
                 abs(order_did_downstream - first_calls["inventory_service"])]
@@ -93,17 +70,14 @@ def bookkeeping(lines, manifests, users_by, calls_by, servers_by):
             if g > worst_edge_gap:
                 worst_edge_gap = g
 
-    all_ok = check(lines, worst_user_gap == 0,
-                   "user requests sent == user requests logged, in every scenario (largest gap: %d)"
-                   % worst_user_gap) and all_ok
-    all_ok = check(lines, worst_edge_gap == 0,
-                   "requests received by a service == first attempts its caller logged (largest gap: %d)"
-                   % worst_edge_gap) and all_ok
+    all_ok = check(lines, worst_user_gap == 0, "Bookkeeping", "users sent vs users logged (max gap)",
+                   "%d" % worst_user_gap) and all_ok
+    all_ok = check(lines, worst_edge_gap == 0, "Bookkeeping", "requests received vs first attempts (max gap)",
+                   "%d" % worst_edge_gap) and all_ok
     return all_ok
 
 
 def retry_sequences(lines, calls):
-    lines.append("2. Retry rules -- attempts numbered 1,2,3... and never above the policy limit")
     by_call = {}
     missing_ids = 0
     for record in calls:
@@ -116,7 +90,7 @@ def retry_sequences(lines, calls):
         by_call[call_id].append(record)
 
     if len(by_call) == 0:
-        check(lines, False, "no call_id field in the logs (data recorded by an older version)")
+        check(lines, False, "Retry rules", "call_id missing in the logs", "-")
         return False
 
     bad_order = 0
@@ -141,12 +115,10 @@ def retry_sequences(lines, calls):
                 break
 
     ok = True
-    ok = check(lines, bad_order == 0, "%d logical calls checked: attempts always numbered 1..k in order (%d broken)"
-               % (total, bad_order)) and ok
-    ok = check(lines, over_limit == 0, "no call made more attempts than its policy allowed (%d violations)"
-               % over_limit) and ok
-    ok = check(lines, retried_success == 0, "a call is never retried after it succeeded (%d violations)"
-               % retried_success) and ok
+    ok = check(lines, bad_order == 0, "Retry rules", "calls with attempts out of order",
+               "%d/%d" % (bad_order, total)) and ok
+    ok = check(lines, over_limit == 0, "Retry rules", "calls above the attempt limit", "%d" % over_limit) and ok
+    ok = check(lines, retried_success == 0, "Retry rules", "calls retried after success", "%d" % retried_success) and ok
     return ok
 
 
@@ -155,7 +127,6 @@ def attempt_key(record):
 
 
 def utilization(lines, manifests, servers_by):
-    lines.append("3. Queueing theory -- Utilization Law U = X*S/c <= 1, saturation throughput = c/S")
     worst_u = 0.0
     table = []
     for manifest in manifests:
@@ -171,7 +142,6 @@ def utilization(lines, manifests, servers_by):
             if record["service"] == target and record["status"] != 503:
                 served.append(record)
 
-        # busy slot-seconds in each 2s window (exact overlap)
         t0 = manifest["start"]
         n_windows = int(math.ceil((manifest["end"] - t0) / WINDOW_SEC))
         busy = [0.0] * max(n_windows, 1)
@@ -210,32 +180,19 @@ def utilization(lines, manifests, servers_by):
                 u_fault = max(u_fault, busy[k] / (c * WINDOW_SEC))
         table.append((sid, target, c, mean_service * 1000, capacity, measured, u_fault))
 
-    ok = check(lines, worst_u <= 1.02,
-               "no 2s window ever had a service more than 100%% busy (highest: %.1f%%)" % (100 * worst_u))
+    ok = check(lines, worst_u <= 1.02, "Queueing", "max utilisation U = X.S/c (2 s windows)",
+               "%.1f%%" % (100 * worst_u))
     if len(table) > 0:
-        lines.append("     latency-fault scenarios, during the held fault:")
-        lines.append("     %-30s %-18s %2s %12s %16s %16s %12s" % ("scenario", "service", "c", "service time",
-                                                                  "theory c/S", "measured", "peak busy"))
         ratios = []
         for sid, target, c, s_ms, capacity, measured, u_fault in table:
-            lines.append("     %-30s %-18s %2d %10.0fms %13.2f/s %13.2f/s %11.0f%%" % (
-                sid, target, c, s_ms, capacity, measured, 100 * u_fault))
             ratios.append(measured / capacity)
         mean_ratio = sum(ratios) / len(ratios)
-        ok = check(lines, 0.75 <= mean_ratio <= 1.05,
-                   "under the held fault, measured throughput is %.0f%% of the c/S limit on average "
-                   "(the service is saturated: busy, not idle)" % (100 * mean_ratio)) and ok
+        ok = check(lines, 0.75 <= mean_ratio <= 1.05, "Queueing",
+                   "throughput / (c/S) in held fault (%d runs)" % len(ratios), "%.0f%%" % (100 * mean_ratio)) and ok
     return ok
 
 
 def fault_fidelity(lines, manifests, servers_by):
-    lines.append("4. Fault injection -- the service really behaved as configured")
-    # A measured average always wobbles around the true value just by
-    # chance, by about one "standard error". So the fair test is: is the
-    # measurement within a few standard errors of what was configured?
-    #   latency: drawn uniformly from a 200 ms wide range -> std = 200/sqrt(12)
-    #   errors:  each request fails with probability p   -> std = sqrt(p(1-p))
-    # and the standard error of an average of n values is std / sqrt(n).
     latency_z = []
     latency_bias = []
     error_z = []
@@ -273,14 +230,12 @@ def fault_fidelity(lines, manifests, servers_by):
     ok = True
     if len(latency_z) > 0:
         bias = 100.0 * sum(latency_bias) / len(latency_bias)
-        ok = check(lines, max(latency_z) < 3.5,
-                   "latency faults: every run's measured service time is within %.1f standard errors of the"
-                   " configured value (%d runs; average bias %+.1f%%, Python timer + logging overhead)"
-                   % (max(latency_z), len(latency_z), bias)) and ok
+        ok = check(lines, max(latency_z) < 3.5, "Fault injection",
+                   "latency: max |z| (%d runs, bias %+.1f%%)" % (len(latency_z), bias),
+                   "%.1f" % max(latency_z)) and ok
     if len(error_z) > 0:
-        ok = check(lines, max(error_z) < 3.5,
-                   "error faults: every run's measured failure fraction is within %.1f standard errors of the"
-                   " configured rate (%d runs)" % (max(error_z), len(error_z))) and ok
+        ok = check(lines, max(error_z) < 3.5, "Fault injection", "errors: max |z| (%d runs)" % len(error_z),
+                   "%.1f" % max(error_z)) and ok
 
     normal_fail = []
     for manifest in manifests:
@@ -298,14 +253,13 @@ def fault_fidelity(lines, manifests, servers_by):
     if len(normal_fail) > 0:
         mean_fail = sum(normal_fail) / len(normal_fail)
         expected = DEFAULT_SERVICE_CONFIGS["payment_service"]["failure_rate"]
-        ok = check(lines, abs(mean_fail - expected) < 0.01,
-                   "healthy leaf services fail %.1f%% of requests on average (configured %.0f%%)"
-                   % (100 * mean_fail, 100 * expected)) and ok
+        ok = check(lines, abs(mean_fail - expected) < 0.01, "Fault injection",
+                   "healthy leaf failure rate (configured %.0f%%)" % (100 * expected),
+                   "%.1f%%" % (100 * mean_fail)) and ok
     return ok
 
 
 def load_fidelity(lines, manifests, users_by):
-    lines.append("5. Load generator -- users arrive at the configured rate")
     errors = []
     for manifest in manifests:
         users = users_by.get(manifest["scenario_id"], [])
@@ -315,15 +269,13 @@ def load_fidelity(lines, manifests, users_by):
         measured = len(users) / seconds
         errors.append(abs(measured - manifest["rps"]) / manifest["rps"])
     if len(errors) == 0:
-        return check(lines, False, "no scenarios to check")
+        return check(lines, False, "Load generator", "no runs to check", "-")
     mean_error = sum(errors) / len(errors)
-    return check(lines, mean_error < 0.10,
-                 "achieved arrival rate within %.1f%% of the target on average (worst %.1f%%, random Poisson arrivals)"
-                 % (100 * mean_error, 100 * max(errors)))
+    return check(lines, mean_error < 0.10, "Load generator", "arrival rate error (mean / worst)",
+                 "%.1f%% / %.1f%%" % (100 * mean_error, 100 * max(errors)))
 
 
 def time_sanity(lines, calls, users, servers):
-    lines.append("6. Timestamps -- nothing ends before it starts")
     bad = 0
     for record in calls:
         if record.get("start_time", record["timestamp"]) > record["timestamp"] + 1e-6:
@@ -334,8 +286,8 @@ def time_sanity(lines, calls, users, servers):
     for record in servers:
         if not (record["arrived"] <= record["slot_time"] + 1e-6 <= record["timestamp"] + 2e-6):
             bad = bad + 1
-    return check(lines, bad == 0, "%d records checked, %d with impossible times"
-                 % (len(calls) + len(users) + len(servers), bad))
+    return check(lines, bad == 0, "Timestamps", "records with impossible times",
+                 "%d/%d" % (bad, len(calls) + len(users) + len(servers)))
 
 
 def main():
@@ -351,7 +303,7 @@ def main():
         if args.group == "all" or manifest.get("group") == args.group:
             manifests.append(manifest)
     if len(manifests) == 0:
-        print("no scenarios found. Run some scenarios first.")
+        print("error: no runs recorded")
         sys.exit(1)
 
     ids = [m["scenario_id"] for m in manifests]
@@ -360,11 +312,12 @@ def main():
     servers, s3 = read_server_records(ids)
 
     lines = []
-    lines.append("Data validation -- %d scenarios, %d call attempts, %d user requests, %d server records"
+    lines.append("DATA VALIDATION  |  %d runs  |  %d call attempts  |  %d users  |  %d server records"
                  % (len(manifests), len(calls), len(users), len(servers)))
-    lines.append("=" * 78)
-    if s1 + s2 + s3 > 0:
-        lines.append("note: %d damaged log line(s) skipped" % (s1 + s2 + s3))
+    lines.append("")
+    header = "%-16s %-46s %-14s %s" % ("Group", "Check", "Value", "Result")
+    lines.append(header)
+    lines.append("-" * len(header))
 
     users_by = group_by(users, "scenario_id")
     calls_by = group_by(calls, "scenario_id")
@@ -392,7 +345,7 @@ def main():
 
     lines.append("")
     passed = len([r for r in results if r])
-    lines.append("%d of %d check groups passed" % (passed, len(results)))
+    lines.append("Check groups passed: %d/%d" % (passed, len(results)))
 
     text = "\n".join(lines)
     print(text)

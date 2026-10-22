@@ -6,6 +6,7 @@ import random
 import subprocess
 import sys
 import time
+import warnings
 
 import requests
 
@@ -15,23 +16,8 @@ from common.telemetry import (read_call_records, read_user_records, read_server_
                               read_scenarios, within_run)
 from run_all import wait_until_idle
 import scenario_runner
+from common.plots import plt, save_figure, BLUE, ORANGE, GREY, LIGHT_GREY
 
-# The headline experiment: the SAME fault, hit with five different retry
-# strategies, each repeated several times in a shuffled order.
-#
-#   no_retry      max_attempts = 1 everywhere
-#   static_retry  max_attempts = 3 everywhere (common industry default)
-#   retry_budget  3 attempts, but retries capped at 10% of fresh calls per
-#                 edge (Google SRE book / Finagle / gRPC retry throttling)
-#   reactive      our controller, cuts when rho > 1
-#   predictive    our controller, cuts when the model predicts livelock
-#
-# Two fault situations:
-#   metastable    order_service has a long queue (10s). Payment slows down
-#                 gradually, then recovers. Does the system recover too?
-#   error_burst   short queue (1s). Payment starts failing 70% of calls
-#                 (fast errors, not slowness). Here retries are USEFUL,
-#                 because each attempt has a fresh chance to succeed.
 
 EXPERIMENTS = {
     "metastable": {
@@ -111,15 +97,12 @@ def run_one(experiment, arm, rep, seed):
             except subprocess.TimeoutExpired:
                 controller.terminate()
                 controller.wait(timeout=5)
-        # whatever happened, the next run starts from the default policy
         reset_policy()
 
     if not wait_until_idle(timeout_sec=60):
         print("   warning: services did not go idle within 60s")
     return scenario_id
 
-
-# ---------------- metrics from the logs ----------------
 
 def percentile(values, fraction):
     if len(values) == 0:
@@ -149,8 +132,6 @@ def in_period(t, bounds):
 
 
 def recovery_time(user_records, fault_end, end, normal_rate):
-    # seconds after the fault was removed until users get >= 90% of their
-    # normal success rate, and keep getting it for RECOVERY_HOLD_SEC
     n_seconds = int(math.ceil(end - fault_end))
     buckets = []
     for i in range(n_seconds):
@@ -199,8 +180,6 @@ def run_metrics(manifest, users, calls, servers):
         done = 0
         orphaned = 0
         for record in servers:
-            # orphaned work = order_service finishing a request after the
-            # gateway already gave up on it (the queue is at order_service)
             if record["service"] != "order_service" or record["status"] == 503:
                 continue
             if in_period(record["slot_time"], b):
@@ -216,8 +195,6 @@ def run_metrics(manifest, users, calls, servers):
         metrics[period + "_p95_latency_ms"] = percentile(latencies, 0.95) or 0.0
         metrics[period + "_calls"] = n_calls
         metrics[period + "_retries"] = n_retries
-        # work per useful result. With zero successes the division is
-        # undefined, so the count of successes is floored at 1
         metrics[period + "_calls_per_success"] = float(n_calls) / ok if ok > 0 else float(n_calls)
         metrics[period + "_orphaned_pct"] = 100.0 * orphaned / done if done > 0 else 0.0
 
@@ -252,7 +229,6 @@ def collect_results():
     for manifest in manifests:
         scenario_id = manifest["scenario_id"]
         parts = scenario_id.split("_")
-        # exp_<experiment>_<arm>_r<rep>; experiment and arm names contain "_"
         rep = int(parts[-1][1:])
         experiment = None
         arm = None
@@ -289,7 +265,9 @@ def welch_p(a, b):
         return None
     try:
         from scipy.stats import ttest_ind
-        result = ttest_ind(a, b, equal_var=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = ttest_ind(a, b, equal_var=False)
         if math.isnan(result.pvalue):
             return None
         return float(result.pvalue)
@@ -297,17 +275,31 @@ def welch_p(a, b):
         return None
 
 
+ARM_LABELS = {"no_retry": "No retry", "static_retry": "Static retry", "retry_budget": "Retry budget 10%",
+              "reactive": "Reactive (ours)", "predictive": "Predictive (ours)"}
+
 SUMMARY_COLUMNS = [
-    ("normal_success_pct", "success% normal", "%.1f"),
-    ("fault_success_pct", "success% fault", "%.1f"),
-    ("recovery_success_pct", "success% after", "%.1f"),
-    ("recovery_sec", "recovery s", "%.1f"),
-    ("fault_calls", "calls in fault", "%.0f"),
-    ("fault_calls_per_success", "calls/success", "%.1f"),
-    ("fault_orphaned_pct", "orphaned% fault", "%.1f"),
-    ("recovery_orphaned_pct", "orphaned% after", "%.1f"),
-    ("fault_p95_latency_ms", "p95 ms fault", "%.0f"),
+    ("normal_success_pct", "Healthy%", "%.1f"),
+    ("fault_success_pct", "Fault%", "%.1f"),
+    ("recovery_success_pct", "After%", "%.1f"),
+    ("recovery_sec", "Recov(s)", "%.1f"),
+    ("fault_calls", "Calls", "%.0f"),
+    ("recovery_orphaned_pct", "Orphan%", "%.1f"),
 ]
+
+SIGNIFICANCE = [
+    ("metastable", "recovery_success_pct", "static_retry"),
+    ("metastable", "recovery_success_pct", "retry_budget"),
+    ("metastable", "recovery_success_pct", "reactive"),
+    ("metastable", "fault_calls", "static_retry"),
+    ("error_burst", "fault_success_pct", "static_retry"),
+    ("error_burst", "fault_success_pct", "retry_budget"),
+]
+
+
+def cell(values, form):
+    mean, std = mean_std(values)
+    return (form % mean) + "+-" + (form % std)
 
 
 def write_summary(rows):
@@ -319,46 +311,105 @@ def write_summary(rows):
             writer.writerow(row)
 
     lines = []
-    lines.append("Retry strategies under the same fault (mean +/- std over repeated runs)")
-    lines.append("=" * 72)
+    n_reps = max([r["rep"] for r in rows])
+    lines.append("RETRY STRATEGIES  |  %d strategies x %d runs per fault  |  mean+-std" % (len(ARMS), n_reps))
+    table_number = 1
     for experiment in EXPERIMENTS:
         exp_rows = [r for r in rows if r["experiment"] == experiment]
         if len(exp_rows) == 0:
             continue
         lines.append("")
-        lines.append("EXPERIMENT: %s   %s" % (experiment, describe(experiment)))
+        lines.append("Table %d. %s %s" % (table_number, experiment, describe(experiment)))
+        table_number = table_number + 1
+        header = "%-18s %10s" % ("Strategy", "Recovered")
         for key, title, form in SUMMARY_COLUMNS:
-            lines.append("  %s" % title)
-            for arm in ARMS:
-                values = [r[key] for r in exp_rows if r["arm"] == arm]
-                if len(values) == 0:
-                    continue
-                mean, std = mean_std(values)
-                each = ", ".join([form % v for v in values])
-                lines.append("    %-14s %10s +/- %-8s (n=%d: %s)" % (arm, form % mean, form % std, len(values), each))
-        recovered_line = "  recovered within the observation window: "
-        parts = []
+            header = header + " %11s" % title
+        lines.append(header)
+        lines.append("-" * len(header))
         for arm in ARMS:
             arm_rows = [r for r in exp_rows if r["arm"] == arm]
-            if len(arm_rows) > 0:
-                n_ok = len([r for r in arm_rows if r["recovered"]])
-                parts.append("%s %d/%d" % (arm, n_ok, len(arm_rows)))
-        lines.append(recovered_line + ", ".join(parts))
+            if len(arm_rows) == 0:
+                continue
+            n_ok = len([r for r in arm_rows if r["recovered"]])
+            line = "%-18s %10s" % (ARM_LABELS[arm], "%d/%d" % (n_ok, len(arm_rows)))
+            for key, title, form in SUMMARY_COLUMNS:
+                line = line + " %11s" % cell([r[key] for r in arm_rows], form)
+            lines.append(line)
 
-        lines.append("  significance (Welch t-test p-values, n is small so read with care):")
-        for key in ["recovery_success_pct", "fault_success_pct", "fault_calls", "recovery_sec"]:
-            for a, b in [("static_retry", "reactive"), ("static_retry", "predictive"),
-                         ("retry_budget", "predictive"), ("reactive", "predictive")]:
-                va = [r[key] for r in exp_rows if r["arm"] == a]
-                vb = [r[key] for r in exp_rows if r["arm"] == b]
-                p = welch_p(va, vb)
-                if p is not None:
-                    lines.append("    %-22s %-13s vs %-11s p = %.3f" % (key, a, b, p))
+    lines.append("")
+    lines.append("Table %d. Welch t-test, predictive vs other strategies" % table_number)
+    header = "%-12s %-22s %-18s %8s %8s %8s" % ("Experiment", "Metric", "Other strategy", "Other", "Pred.", "p")
+    lines.append(header)
+    lines.append("-" * len(header))
+    for experiment, key, other in SIGNIFICANCE:
+        exp_rows = [r for r in rows if r["experiment"] == experiment]
+        va = [r[key] for r in exp_rows if r["arm"] == other]
+        vb = [r[key] for r in exp_rows if r["arm"] == "predictive"]
+        p = welch_p(va, vb)
+        if p is None:
+            continue
+        lines.append("%-12s %-22s %-18s %8.1f %8.1f %8.3f" % (experiment, key, ARM_LABELS[other],
+                                                            mean_std(va)[0], mean_std(vb)[0], p))
 
     text = "\n".join(lines)
     with open(SUMMARY_PATH, "w") as f:
         f.write(text + "\n")
     return text
+
+
+def draw_summary(rows, show):
+    experiments = [e for e in EXPERIMENTS if len([r for r in rows if r["experiment"] == e]) > 0]
+    fig, axes = plt.subplots(2, len(experiments), figsize=(6.2 * len(experiments), 7.6), squeeze=False)
+    periods = [("normal_success_pct", "Healthy", LIGHT_GREY), ("fault_success_pct", "During fault", ORANGE),
+               ("recovery_success_pct", "After fault", BLUE)]
+    labels = [ARM_LABELS[a].replace(" (ours)", "\n(ours)").replace(" 10%", "\n10%") for a in ARMS]
+    for col in range(len(experiments)):
+        experiment = experiments[col]
+        exp_rows = [r for r in rows if r["experiment"] == experiment]
+        ax = axes[0][col]
+        width = 0.26
+        for k in range(len(periods)):
+            key, label, colour = periods[k]
+            means = []
+            stds = []
+            for arm in ARMS:
+                mean, std = mean_std([r[key] for r in exp_rows if r["arm"] == arm])
+                means.append(mean)
+                stds.append(std)
+            xs = [i + (k - 1) * width for i in range(len(ARMS))]
+            ax.bar(xs, means, width=width, color=colour, yerr=stds, capsize=2, label=label)
+            ax.grid(False, axis="x")
+        ax.set_xticks(range(len(ARMS)))
+        ax.set_xticklabels(labels, fontsize=8)
+        ax.set_ylim(0, 112)
+        ax.set_ylabel("Users served (%)")
+        ax.grid(axis="x", visible=False)
+        ax.set_title("(%s) %s: users served" % ("ab"[col], experiment.replace("_", " ")))
+        ax.legend(loc="upper center", ncol=3, fontsize=8)
+
+        ax = axes[1][col]
+        means = []
+        stds = []
+        for arm in ARMS:
+            mean, std = mean_std([r["fault_calls"] for r in exp_rows if r["arm"] == arm])
+            means.append(mean)
+            stds.append(std)
+        colours = [BLUE if a in ("reactive", "predictive") else GREY for a in ARMS]
+        ax.bar(range(len(ARMS)), means, yerr=stds, capsize=3, color=colours, width=0.55)
+        ax.grid(False, axis="x")
+        for i in range(len(ARMS)):
+            arm_rows = [r for r in exp_rows if r["arm"] == ARMS[i]]
+            n_ok = len([r for r in arm_rows if r["recovered"]])
+            ax.text(i, means[i] + stds[i] + max(means) * 0.03, "recovered\n%d/%d" % (n_ok, len(arm_rows)),
+                    ha="center", fontsize=8)
+        ax.set_xticks(range(len(ARMS)))
+        ax.set_xticklabels(labels, fontsize=8)
+        ax.set_ylim(0, max(means) * 1.3)
+        ax.set_ylabel("Internal calls during fault")
+        ax.grid(axis="x", visible=False)
+        ax.set_title("(%s) %s: work done during the fault" % ("cd"[col], experiment.replace("_", " ")))
+    fig.tight_layout()
+    return save_figure(fig, "experiments.png", show)
 
 
 def describe(experiment):
@@ -376,8 +427,8 @@ def main():
     parser.add_argument("--experiments", type=str, default="metastable,error_burst")
     parser.add_argument("--arms", type=str, default=",".join(ARMS))
     parser.add_argument("--seed", type=int, default=11)
-    parser.add_argument("--summary_only", action="store_true",
-                        help="do not run anything, just recompute the tables from the logs")
+    parser.add_argument("--summary_only", action="store_true")
+    parser.add_argument("--no_show", action="store_true")
     args = parser.parse_args()
     make_dirs()
 
@@ -438,10 +489,13 @@ def main():
 
     rows = collect_results()
     if len(rows) == 0:
-        print("no experiment runs found in the logs.")
+        print("error: no experiment runs in the logs")
         sys.exit(1)
-    print("")
+    if not args.summary_only:
+        print("")
     print(write_summary(rows))
+    print("")
+    draw_summary(rows, not args.no_show)
 
 
 if __name__ == "__main__":

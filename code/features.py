@@ -2,26 +2,24 @@ import math
 
 from common.config import EDGES, PARENT_EDGE, CHILD_EDGES, edge_name
 
-# Everything that turns raw call records into numbers lives here, and is
-# used by labeling.py (offline), prediction_model.py (training) and
-# controller.py (live). One copy of the maths = the model is trained on
-# exactly the same numbers the controller computes at runtime.
 
 WINDOW_SEC = 2.0
 RHO_MAX = 10.0
 RATIO_MAX = 50.0
+USEFUL_MAX = 5.0
+LOG_FLOOR = 0.01
 
 
 def empty_counts():
     return {
-        "n_first": 0,        # fresh calls (attempt 1) that ended in this window
-        "n_retry": 0,        # retries (attempt 2, 3, ...) that ended in this window
-        "n_success": 0,      # attempts that returned 200
-        "n_first_fail": 0,   # fresh calls that failed
-        "n_busy": 0,         # 503: callee had no free slot
-        "n_timeout": 0,      # code 0: caller gave up waiting / could not connect
+        "n_first": 0,
+        "n_retry": 0,
+        "n_success": 0,
+        "n_first_fail": 0,
+        "n_busy": 0,
+        "n_timeout": 0,
         "latency_sum": 0.0,
-        "busy_time": 0.0,    # sum of time calls spent in flight inside the window
+        "busy_time": 0.0,
     }
 
 
@@ -56,7 +54,6 @@ def finish_window(counts, window_sec):
     lambda_base = counts["n_first"] / window_sec
     lambda_retry = counts["n_retry"] / window_sec
 
-    # rho = retry amplification = retries per fresh call
     if counts["n_first"] > 0:
         rho = float(counts["n_retry"]) / counts["n_first"]
         if rho > RHO_MAX:
@@ -75,9 +72,6 @@ def finish_window(counts, window_sec):
         overload_ratio = 0.0
         mean_latency_ms = None
 
-    # fail_ratio looks at FRESH calls only, so it does not depend on the
-    # retry policy. Even with retries switched off (max_attempts=1, rho=0
-    # by definition) it still shows whether the callee is healthy.
     if counts["n_first"] > 0:
         fail_ratio = float(counts["n_first_fail"]) / counts["n_first"]
     else:
@@ -98,9 +92,6 @@ def finish_window(counts, window_sec):
 
 
 def window_stats_for_edge(records, t0, n_windows, window_sec=WINDOW_SEC):
-    # records: all call attempts on ONE edge. A call counts in the window
-    # where it ENDED (that is when we learn its outcome), but its time in
-    # flight is spread over every window it overlapped, for concurrency.
     windows = []
     for i in range(n_windows):
         windows.append(empty_counts())
@@ -135,7 +126,6 @@ def window_stats_for_edge(records, t0, n_windows, window_sec=WINDOW_SEC):
 
 
 def live_window_stats(records, window_end, window_sec=WINDOW_SEC):
-    # the same numbers for the single most recent window (controller)
     t0 = window_end - window_sec
     return window_stats_for_edge(records, t0, 1, window_sec)[0]
 
@@ -151,15 +141,6 @@ def split_by_edge(records):
     return by_edge
 
 
-# ---------------- the reactive alarm (no learning) ----------------
-#
-# A retry storm needs two ingredients at the same time:
-#   amplification   more retries than fresh calls        (rho > 1)
-#   saturation      the callee is out of capacity        (many 503s / timeouts)
-# Retries into a callee that still has spare capacity are fine -- that is
-# what retries are for. Used by the reactive controller and as the
-# "reactive rule" baseline in prediction_model.py.
-
 ALARM_RHO = 1.0
 ALARM_OVERLOAD = 0.2
 ALARM_MIN_CALLS = 3
@@ -171,23 +152,16 @@ def reactive_alarm(stats):
     return stats["rho"] > ALARM_RHO and stats["overload_ratio"] > ALARM_OVERLOAD
 
 
-# ---------------- feature vector for the prediction model ----------------
-
 FEATURE_NAMES = [
-    # this edge, right now
-    "rho", "fail_ratio", "overload_ratio", "latency_ratio", "concurrency_ratio",
-    # how this edge changed since the previous window (temporal)
-    "d_rho", "d_fail_ratio", "d_latency_ratio",
-    # the edges directly BELOW this one on the call path (graph)
-    "down_max_overload", "down_max_latency_ratio", "down_max_fail_ratio",
-    # the edge directly ABOVE this one (graph)
+    "rho", "fail_ratio", "overload_ratio", "log_latency_ratio", "log_concurrency_ratio", "useful_ratio",
+    "d_rho", "d_fail_ratio", "d_latency_ratio", "d_concurrency_ratio",
+    "down_max_overload", "log_down_max_latency_ratio", "down_max_fail_ratio",
     "up_rho", "up_overload_ratio",
-    # which edge this is
     "edge_gateway_order", "edge_order_payment", "edge_order_inventory",
 ]
 
-TEMPORAL_FEATURES = ["d_rho", "d_fail_ratio", "d_latency_ratio"]
-GRAPH_FEATURES = ["down_max_overload", "down_max_latency_ratio", "down_max_fail_ratio",
+TEMPORAL_FEATURES = ["d_rho", "d_fail_ratio", "d_latency_ratio", "d_concurrency_ratio"]
+GRAPH_FEATURES = ["down_max_overload", "log_down_max_latency_ratio", "down_max_fail_ratio",
                   "up_rho", "up_overload_ratio"]
 
 
@@ -215,22 +189,35 @@ def concurrency_ratio(stats, edge, baselines):
     return capped(stats["concurrency"] / base)
 
 
+def useful_ratio(stats, edge, baselines):
+    if stats is None or stats["n_calls"] == 0:
+        return 1.0
+    base = baselines[edge_name(edge)].get("s_useful", 0.0)
+    if base <= 0:
+        return 1.0
+    return min(stats["s_useful"] / base, USEFUL_MAX)
+
+
+def log_ratio(value):
+    return math.log(max(value, LOG_FLOOR))
+
+
 def own_values(stats, edge, baselines):
     if stats is None or stats["n_calls"] == 0:
         return {"rho": 0.0, "fail_ratio": 0.0, "overload_ratio": 0.0,
-                "latency_ratio": 1.0, "concurrency_ratio": concurrency_ratio(stats, edge, baselines)}
+                "latency_ratio": 1.0, "concurrency_ratio": concurrency_ratio(stats, edge, baselines),
+                "useful_ratio": 1.0}
     return {
         "rho": stats["rho"],
         "fail_ratio": stats["fail_ratio"],
         "overload_ratio": stats["overload_ratio"],
         "latency_ratio": latency_ratio(stats, edge, baselines),
         "concurrency_ratio": concurrency_ratio(stats, edge, baselines),
+        "useful_ratio": useful_ratio(stats, edge, baselines),
     }
 
 
 def make_features(stats_now, stats_prev, baselines):
-    # stats_now / stats_prev: {edge: window stats} for the current and the
-    # previous window. Returns {edge: {feature name: value}}.
     own_now = {}
     own_prev = {}
     for edge in EDGES:
@@ -244,10 +231,10 @@ def make_features(stats_now, stats_prev, baselines):
         values["d_rho"] = own_now[edge]["rho"] - own_prev[edge]["rho"]
         values["d_fail_ratio"] = own_now[edge]["fail_ratio"] - own_prev[edge]["fail_ratio"]
         values["d_latency_ratio"] = own_now[edge]["latency_ratio"] - own_prev[edge]["latency_ratio"]
+        values["d_concurrency_ratio"] = own_now[edge]["concurrency_ratio"] - own_prev[edge]["concurrency_ratio"]
+        values["log_latency_ratio"] = log_ratio(own_now[edge]["latency_ratio"])
+        values["log_concurrency_ratio"] = log_ratio(own_now[edge]["concurrency_ratio"])
 
-        # one step of message passing over the service graph: each edge
-        # takes the worst value among the edges directly below it, and
-        # the values of the edge directly above it
         down_overload = 0.0
         down_latency = 1.0
         down_fail = 0.0
@@ -260,6 +247,7 @@ def make_features(stats_now, stats_prev, baselines):
                 down_fail = own_now[child]["fail_ratio"]
         values["down_max_overload"] = down_overload
         values["down_max_latency_ratio"] = down_latency
+        values["log_down_max_latency_ratio"] = log_ratio(down_latency)
         values["down_max_fail_ratio"] = down_fail
 
         parent = PARENT_EDGE[edge]
@@ -286,9 +274,6 @@ def feature_vector(values, feature_names=FEATURE_NAMES):
 
 
 def risk_probability(model, values):
-    # logistic regression by hand: weighted sum of the standardised
-    # features, squashed into 0..1 by the sigmoid. No scikit-learn needed
-    # at runtime, so the controller is just arithmetic.
     z = model["intercept"]
     i = 0
     for name in model["feature_names"]:
