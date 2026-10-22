@@ -33,6 +33,9 @@ from features import (make_features, feature_vector, risk_probability, reactive_
 #   - a shuffled-label control (if that scores as well, the model learned nothing)
 #   - ablations: without the graph features, without the temporal features
 #   - lead time: how many seconds BEFORE a livelock starts the alarm goes up
+#
+# evaluate_model.py then looks at the saved out-of-fold scores in more
+# detail (MCC, ROC-AUC, calibration, confidence intervals, run-time cost).
 
 LABELED_PATH = os.path.join(DATA_DIR, "labeled_windows.csv")
 BASELINES_PATH = os.path.join(DATA_DIR, "baselines.json")
@@ -157,9 +160,10 @@ def make_forest():
                                   class_weight="balanced", random_state=0)
 
 
-def cross_validate(examples, feature_names, model_kind, shuffle_labels):
+def cross_validate(examples, feature_names, model_kind, shuffle_labels, shuffle_seed=0):
     # out-of-fold probabilities: each example is scored by a model that
-    # never saw its scenario
+    # never saw its scenario. shuffle_seed only matters for the
+    # shuffled-label control (evaluate_model.py repeats it with other seeds).
     groups = []
     for example in examples:
         groups.append(example["scenario_id"])
@@ -178,7 +182,7 @@ def cross_validate(examples, feature_names, model_kind, shuffle_labels):
         y_test = [y_all[i] for i in test_index]
 
         if shuffle_labels:
-            rng = random.Random(fold_number)
+            rng = random.Random(fold_number + 1000 * shuffle_seed)
             rng.shuffle(y_train)
 
         if sum(y_train) == 0 or sum(y_train) == len(y_train):
@@ -505,15 +509,24 @@ def main():
     with open(METRICS_PATH, "w") as f:
         json.dump(saved, f, indent=2)
 
+    # out-of-fold scores of every method, one row per example. "risk" is our
+    # model; the other columns are there so evaluate_model.py can compare
+    # all methods on exactly the same windows.
     with open(OOF_PATH, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["scenario_id", "edge", "window_index", "t_rel", "phase", "label_now",
-                         "label_future", "risk", "rho_now"])
+                         "label_future", "risk", "rho_now", "label_prev", "p_no_graph",
+                         "p_no_temporal", "p_forest", "p_shuffled", "rule_reactive", "rule_persistence"])
         for i in range(len(examples)):
             example = examples[i]
             writer.writerow([example["scenario_id"], edge_name(example["edge"]), example["window_index"],
                              example["t_rel"], example["phase"], example["label_now"], example["label"],
-                             round(ours[i], 4), example["rho_now"]])
+                             round(ours[i], 6), example["rho_now"], example["label_prev"],
+                             round(oof["  - without graph features"][i], 6),
+                             round(oof["  - without temporal features"][i], 6),
+                             round(oof["random forest (comparison)"][i], 6),
+                             round(oof["shuffled-label control"][i], 6),
+                             rule_rho[i], rule_persist[i]])
 
     text = "\n".join(lines)
     print("")

@@ -253,9 +253,11 @@ false alarm costs a few seconds of fewer retries. On healthy traffic the model r
 in 1.4% of windows. In the controller, the congestion gate filters those out too.
 
 **Q30. The random forest scores higher. Why not use it?**
-It's a few points better. We kept logistic regression because the controller computes it by
-hand, because its weights can be inspected, and because the gap is small. We report the forest
-as evidence that a non-linear model has headroom.
+It's a few points better (PR-AUC 0.88 vs 0.84; the bootstrap says the gap is real but small,
+0.02 to 0.07). We kept logistic regression because of cost and transparency: the controller runs
+it every second, and one risk value takes a few µs by hand against about 12 ms for the forest
+(thousands of times slower), with a 2 KB model against 1 MB. Its weights can also be inspected.
+We report the forest as evidence that a non-linear model has headroom.
 
 **Q31. Isn't a reactive rule just as good?**
 Overall it isn't far behind, but on the question that matters for pre-emption, *livelock that
@@ -266,6 +268,43 @@ onset (24 of 30 episodes), against 8 s for the model (30 of 30 episodes).
 The features are correlated (fresh-call failures include overload failures), so individual
 logistic-regression weights can't be read alone. The weight on one feature depends on what the
 others already explain. The right test of a feature group is the ablation, not the weight sign.
+
+**Q32b. Which metrics did you use to evaluate the model, and why those?**
+`evaluate_model.py` reports all the usual ones, but the ones we lead with are chosen for a rare
+event (15% of windows): **MCC 0.71** and **balanced accuracy 0.89** (fair when one class is rare),
+**PR-AUC 0.84** (chance is 0.15) and **ROC-AUC 0.95** (ranking quality with no threshold), **F1/F2**
+(F2 counts recall double, because a missed storm costs more than an early cut), plus calibration
+(Brier, ECE), 95% intervals and run-time cost.
+
+**Q32c. Your accuracy is 92%. Isn't that the number to report?**
+No. Saying "no livelock" for every window would already score 85%, because 85% of windows are
+negative. That's why we report balanced accuracy and MCC, which give 0.5 and 0 for that useless model.
+
+**Q32d. How sure are you about F1 0.75? It's one dataset.**
+We bootstrap it: resample the 28 scenarios with replacement 1000 times and recompute. 95% interval:
+F1 0.64 to 0.83, MCC 0.61 to 0.79, ROC-AUC 0.90 to 0.98. We resample whole scenarios, not windows,
+because windows of the same run are not independent. The gain over the reactive rule before onset
+(+0.34, interval +0.23 to +0.42) and the gain from the graph features (+0.10, interval +0.02 to +0.19)
+stay above zero, so they are real.
+
+**Q32e. Is "risk 0.8" an 80% chance?**
+No, and we say so. The model is trained class-balanced, which inflates the risk on purpose: risks
+of 0.5-0.9 are followed by livelock 35-53% of the time (ECE 0.10). The ranking is still excellent
+(ROC-AUC 0.95), and the 0.5 threshold was set for this model. If calibrated probabilities were
+needed, Platt scaling on held-out data would fix it.
+
+**Q32f. Did you tune the threshold to get these numbers?**
+No. 0.5 was fixed in advance. The sweep shows 0.6 would give F1 0.76 instead of 0.75, but picking
+the threshold on the data you report on would inflate the result, so we keep 0.5.
+
+**Q32g. Why is the shuffled-label control's ROC-AUC 0.31, below 0.5?**
+A model trained on shuffled labels has random weights. Because our features are strongly tied to
+livelock, a random direction can land on either side of 0.5. We repeated the control with 20
+different shuffles: ROC-AUC 0.36-0.63 (mean 0.48), PR-AUC 0.15-0.38. None came near ours (0.95 / 0.84).
+
+**Q32h. Is the model fast enough to run inside the controller?**
+Yes. One risk value takes a few µs (3-5 µs on our machine); a whole controller round (features +
+risk + decision for 3 edges) takes about 30 µs, which is 0.003% of the 1 s control interval.
 
 ---
 
@@ -424,6 +463,10 @@ retries and 40% for no retries.
 **"Why trust 0 false alarms?"**
 It's 636 healthy windows, including two control runs at 26–28 users/s, close to the testbed's
 capacity, with no fault. It stays at 0 under every threshold setting in the sweep.
+
+**"92% accuracy just means the classes are imbalanced."**
+Correct, which is why we don't lead with accuracy. MCC is 0.71 (95% interval 0.61-0.79) and balanced
+accuracy 0.89; an always-"no" model would get 0 and 0.5.
 
 **"The model barely beats the rule overall."**
 Overall, F1 is 0.75 against 0.60. On *onsets*, which is what pre-emption needs, it's 0.66

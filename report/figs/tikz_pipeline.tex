@@ -1,0 +1,20 @@
+% offline pipeline run by run_pipeline.py (9 steps, read in number order)
+\begin{tikzpicture}[font=\scriptsize, stp/.style={blk, text width=40mm, minimum height=11mm}]
+\node[stp] (s1) at (0,0)     {\textbf{1.} generate\_dataset.py: 28 runs\\\texttt{\tiny$\to$ data/*.jsonl (raw logs)}};
+\node[stp] (s2) at (5.2,0)   {\textbf{2.} labeling.py: C1--C4 per window\\\texttt{\tiny$\to$ labeled\_windows.csv}};
+\node[stp] (s3) at (10.4,0)  {\textbf{3.} prediction\_model.py: 5-fold CV\\\texttt{\tiny$\to$ model.json, prediction\_oof.csv}};
+\node[stp] (s4) at (10.4,-1.7) {\textbf{4.} evaluate\_model.py: all metrics\\\texttt{\tiny$\to$ model\_evaluation.txt}};
+\node[stp] (s5) at (5.2,-1.7)  {\textbf{5.} graph\_builder.py: graph snapshots\\\texttt{\tiny$\to$ graph\_snapshots.pkl}};
+\node[stp] (s6) at (0,-1.7)    {\textbf{6.} experiment\_arms.py: 50 runs\\\texttt{\tiny$\to$ experiment\_runs.csv}};
+\node[stp] (s7) at (0,-3.4)    {\textbf{7.} labeling.py on experiment runs\\\texttt{\tiny$\to$ labeled\_windows\_experiment.csv}};
+\node[stp] (s8) at (5.2,-3.4)  {\textbf{8.} validate\_data.py: 6 checks\\\texttt{\tiny$\to$ data\_validation.txt}};
+\node[stp] (s9) at (10.4,-3.4) {\textbf{9.} make\_figures.py\\\texttt{\tiny$\to$ results/figures/, RESULTS.md}};
+\draw[->] (s1) -- (s2);
+\draw[->] (s2) -- (s3);
+\draw[->] (s3) -- (s4);
+\draw[->] (s4) -- (s5);
+\draw[->] (s5) -- (s6);
+\draw[->] (s6) -- (s7);
+\draw[->] (s7) -- (s8);
+\draw[->] (s8) -- (s9);
+\end{tikzpicture}

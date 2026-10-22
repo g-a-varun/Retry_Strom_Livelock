@@ -16,6 +16,7 @@ import controller
 import scenario_runner
 import experiment_arms
 import prediction_model
+import evaluate_model
 import calibrate_from_trace
 from common import retry_policy, safe_files, telemetry, retry_client, fault_injection
 
@@ -543,6 +544,47 @@ class MetricTests(unittest.TestCase):
         model = {"feature_names": ["rho"], "mean": [0.0], "std": [0.0], "weights": [1000.0], "intercept": 0.0}
         self.assertEqual(features.risk_probability(model, {"rho": 10.0}), 1.0)
         self.assertEqual(features.risk_probability(model, {"rho": -10.0}), 0.0)
+
+
+class EvaluationTests(unittest.TestCase):
+
+    def test_confusion_matrix_metrics_by_hand(self):
+        y = [1, 1, 0, 0, 1, 0]
+        pred = [1, 0, 0, 1, 1, 0]          # TP 2, FN 1, TN 2, FP 1
+        m = evaluate_model.threshold_metrics(y, pred)
+        self.assertEqual((m["tp"], m["fp"], m["tn"], m["fn"]), (2, 1, 2, 1))
+        self.assertAlmostEqual(m["accuracy"], 4 / 6.0)
+        self.assertAlmostEqual(m["specificity"], 2 / 3.0)
+        self.assertAlmostEqual(m["mcc"], (2 * 2 - 1 * 1) / 9.0)     # (TP*TN - FP*FN) / sqrt(3*3*3*3)
+        self.assertAlmostEqual(m["kappa"], 1 / 3.0)
+
+    def test_metrics_do_not_crash_when_one_class_is_predicted(self):
+        m = evaluate_model.threshold_metrics([1, 0, 0, 1], [0, 0, 0, 0])
+        self.assertEqual(m["mcc"], 0.0)
+        self.assertEqual(m["precision"], 0.0)
+        self.assertEqual(m["recall"], 0.0)
+
+    def test_calibration_error(self):
+        # always saying 0.5 when half really are positive: perfectly calibrated
+        good = evaluate_model.calibration([1, 0, 1, 0], [0.5, 0.5, 0.5, 0.5])
+        self.assertAlmostEqual(good["ece"], 0.0)
+        self.assertAlmostEqual(good["brier"], 0.25)
+        # always saying 0.9 when half are positive: off by 0.4
+        bad = evaluate_model.calibration([1, 0, 1, 0], [0.9, 0.9, 0.9, 0.9])
+        self.assertAlmostEqual(bad["ece"], 0.4)
+
+    def test_bootstrap_resamples_whole_scenarios(self):
+        rows = []
+        for scenario, label in [("a", 1), ("b", 0), ("c", 1), ("d", 0)]:
+            for k in range(3):
+                rows.append({"scenario_id": scenario, "y": label, "risk": 0.9 if label else 0.1})
+        low, high, used = evaluate_model.bootstrap(rows, evaluate_model.metric_on("risk", "f1"), rounds=50)
+        self.assertEqual((low, high), (1.0, 1.0))      # perfect scores stay perfect in every resample
+        self.assertTrue(0 < used <= 50)                 # resamples with only one class are skipped
+        picked = evaluate_model.resample_scenarios(evaluate_model.random.Random(1), ["a", "b", "c"])
+        self.assertEqual(len(picked), 3)
+        for scenario in picked:
+            self.assertIn(scenario, ["a", "b", "c"])
 
 
 class CalibrationTests(unittest.TestCase):

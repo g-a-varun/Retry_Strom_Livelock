@@ -130,6 +130,22 @@ saves them, and draws the healthy, early warning and livelock picture.
 - `lead_times()`: for each livelock episode, how early the first alarm came.
 - At the end it trains on all the data and saves `results/model.json` (weights, means, stds,
   baselines), then self-checks the hand computation against scikit-learn.
+- It also saves every method's out-of-fold scores in `results/prediction_oof.csv`.
+
+### `evaluate_model.py`: full evaluation of Module 6
+Reads `prediction_oof.csv` and writes `results/model_evaluation.txt`, `.json` and
+`figures/fig5c_model_evaluation.png`.
+- `threshold_metrics()`: TP/FP/TN/FN and everything from them (accuracy, balanced accuracy,
+  precision, recall, specificity, F1, F2, MCC, kappa), written out by hand and self-checked
+  against scikit-learn.
+- `ranking_metrics()`: ROC-AUC and PR-AUC. `calibration()`: Brier score, log loss, ECE and the
+  reliability table.
+- `bootstrap()`: 95% intervals. It resamples whole scenarios (`resample_scenarios()`), because
+  windows from the same run are not independent.
+- `sweep()`: the threshold from 0.1 to 0.9, with lead times and healthy-traffic alarms.
+- `runtime_cost()`: times the hand-written risk, a whole `controller.control_step()` round, the
+  scikit-learn model and the random forest; also training time and model size.
+- Section 8 repeats the shuffled-label control with 20 seeds (`cross_validate(..., shuffle_seed)`).
 
 ### `controller.py`: Module 7
 - `congestion_starting()`: is the callee side filling up? Overload ≥ 10% on this edge or below
@@ -168,7 +184,7 @@ Figures; the one-command full run (with backups); a one-run phase table; and an 
 comparison with the Alibaba production trace (not used in any result).
 
 ### `tests/test_core.py`
-46 unit tests. Point at these when asked "what about edge cases?":
+50 unit tests. Point at these when asked "what about edge cases?":
 - empty windows
 - only retries
 - the rho cap
@@ -186,4 +202,5 @@ comparison with the Alibaba production trace (not used in any result).
 - the tail reader with half-written lines and file resets
 - the Review-2 command still working
 - recovery-time and lead-time maths
+- the evaluation maths (MCC / kappa by hand, calibration error, scenario bootstrap)
 - the Alibaba `.tar.gz` reader

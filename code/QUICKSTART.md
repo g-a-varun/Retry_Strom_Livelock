@@ -11,7 +11,7 @@ pip install -r requirements.txt
 python -m unittest discover tests
 ```
 
-The last line runs the test suite (46 tests, under a second). It should end with `OK`.
+The last line runs the test suite (50 tests, under a second). It should end with `OK`.
 
 ## Step 1: start the services (Terminal 1, leave it open)
 
@@ -57,7 +57,7 @@ python analyze_run.py live2
 Terminal 3 prints each decision as it happens. `CUT` means the retry budget on that edge was reduced, and `RESTORE` means a step was given back.
 Point at the first `CUT` on `gw->order`: it happens about 3 s into the ramp, while `rho` is still `0.00`. That's the pre-emptive cut.
 
-In live2's table, the **recovery** row is an average over the whole 25 s, including the ~15 s spent draining the backlog, so it shows roughly 25–50% (live1 showed ~2%). The **LAST 5 seconds** line shows where it ended up: about **100%**, against near 0% for live1.
+In live2's table, the **recovery** row is an average over the whole 25 s, including the ~15 s spent draining the backlog, so it shows roughly 20–50% (live1 showed ~1-2%). The **LAST 5 seconds** line shows where it ended up: about **100%**, against near 0% for live1.
 
 (`--mode predictive` needs `results/model.json`, which the full pipeline creates. If it's missing, use `--mode reactive`.)
 
@@ -70,9 +70,26 @@ Everything below is already in `results/` from the full run:
 | `results/RESULTS.md` | every number in one place |
 | `results/experiment_summary.txt` | 5 retry strategies x 2 faults, mean +/- std over 5 runs |
 | `results/prediction_results.txt` | model vs baselines, lead time, ablations |
+| `results/model_evaluation.txt` | every metric of the model (MCC, ROC-AUC, calibration, 95% intervals, cost) |
 | `results/data_validation.txt` | why the generated data can be trusted |
 | `results/sensitivity.txt` | what happens if each threshold is moved |
 | `results/figures/*.png` | all the figures |
+
+To show the confusion matrix and the accuracy, with every metric worked out step by step in plain
+Python (no services needed, about a second):
+
+```
+python show_metrics.py
+```
+
+To show the full model evaluation live (no services needed, about 45 seconds):
+
+```
+python evaluate_model.py
+```
+
+It prints every metric (MCC, ROC-AUC, calibration, 95% intervals, run-time cost) and redraws
+`results/figures/fig5c_model_evaluation.png`.
 
 ## Step 5 (optional): re-run everything from scratch
 

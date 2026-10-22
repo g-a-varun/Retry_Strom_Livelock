@@ -1,0 +1,21 @@
+% how a retry creates orphaned work (time goes down)
+\begin{tikzpicture}[font=\scriptsize]
+% lifelines
+\foreach \x/\n/\t in {-0.3/u/User, 2.6/g/Gateway, 5.4/o/Order (8 slots), 8.2/p/Payment (slow)} {
+  \node[blk, minimum width=14mm] (\n) at (\x,0) {\t};
+  \draw[dashed, thin] (\n.south) -- (\x,-6.0);
+}
+% activation bars
+\draw[fill=black!12] (5.32,-1.45) rectangle (5.48,-3.85);
+\draw[fill=black!12] (8.12,-3.85) rectangle (8.28,-4.55);
+% messages
+\draw[->] (-0.3,-0.8) -- node[above] {1. checkout} (2.6,-0.8);
+\draw[->] (2.6,-1.45) -- node[above, align=center] {2. attempt 1\\(deadline $t+2$\,s)} (5.32,-1.45);
+\node[align=left, font=\scriptsize\itshape, anchor=west] at (5.6,-2.2) {attempt 1 waits\\in the queue\\(all slots busy)};
+\node[align=right, anchor=east] at (2.5,-2.3) {3. at $t+2$\,s: timeout,\\gives up on attempt 1};
+\draw[->] (2.6,-3.15) -- node[above, align=center] {4. attempt 2\\(after backoff)} (5.32,-3.15);
+\draw[->] (5.48,-3.85) -- node[above] {5. attempt 1 gets a slot} (8.12,-3.85);
+\draw[->, dashed] (8.12,-4.55) -- node[above] {6. ok} (5.48,-4.55);
+\draw[->, dashed] (5.32,-5.35) -- node[above, align=center] {7. reply to attempt 1:\\nobody is waiting (orphan)} (2.6,-5.35);
+\node at (2.6,-5.35) {\large$\times$};
+\end{tikzpicture}

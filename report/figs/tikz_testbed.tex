@@ -1,0 +1,12 @@
+% testbed: four Flask processes, every arrow is an HTTP call with retries
+\begin{tikzpicture}[font=\scriptsize]
+\node[blk, text width=11mm] (lg) {Load\\generator};
+\node[blk, text width=14mm, right=8mm of lg] (gw) {Gateway\\:5000\\no slot limit};
+\node[blk, text width=13mm, right=6mm of gw] (ord) {Order\\:5003\\8 slots};
+\node[blk, text width=17mm, right=7mm of ord, yshift=5.5mm] (pay) {Payment :5001\\2 slots};
+\node[blk, text width=17mm, right=7mm of ord, yshift=-5.5mm] (inv) {Inventory :5002\\2 slots};
+\draw[->] (lg) -- node[above] {users} (gw);
+\draw[->] (gw) -- node[above] {e1} (ord);
+\draw[->] (ord.east) -- node[above, pos=0.45] {e2} (pay.west);
+\draw[->] (ord.east) -- node[below, pos=0.45] {e3} (inv.west);
+\end{tikzpicture}

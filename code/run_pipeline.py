@@ -18,12 +18,14 @@ from common.config import SERVICE_PORTS
 #   2. generate the dataset (randomised scenarios)          generate_dataset.py
 #   3. label every window with the 4 livelock conditions   labeling.py
 #   4. train + evaluate the prediction model               prediction_model.py
-#   5. build the service graph snapshots                   graph_builder.py
-#   6. run the 5-strategy experiments                      experiment_arms.py
-#   7. label the experiment runs too                       labeling.py --group experiment
-#   8. check the data against queueing theory etc.         validate_data.py
-#   9. draw all figures                                    make_figures.py
-#  10. collect every number into results/RESULTS.md
+#   5. full model evaluation (MCC, ROC-AUC, calibration,
+#      confidence intervals, run-time cost)                evaluate_model.py
+#   6. build the service graph snapshots                   graph_builder.py
+#   7. run the 5-strategy experiments                      experiment_arms.py
+#   8. label the experiment runs too                       labeling.py --group experiment
+#   9. check the data against queueing theory etc.         validate_data.py
+#  10. draw all figures                                    make_figures.py
+#  11. collect every number into results/RESULTS.md
 #
 #   python run_pipeline.py            full run (about 1.5 hours)
 #   python run_pipeline.py --quick    small run for a demo (about 20 minutes)
@@ -101,8 +103,9 @@ def write_results_md(settings):
         ("3. Livelock detection on the dataset", "labeling_dataset.txt"),
         ("4. Threshold sensitivity", "sensitivity.txt"),
         ("5. Livelock prediction", "prediction_results.txt"),
-        ("6. Retry strategies under the same fault", "experiment_summary.txt"),
-        ("7. Detection applied to the experiment runs", "labeling_experiment.txt"),
+        ("6. Full evaluation of the prediction model", "model_evaluation.txt"),
+        ("7. Retry strategies under the same fault", "experiment_summary.txt"),
+        ("8. Detection applied to the experiment runs", "labeling_experiment.txt"),
     ]
     for title, name in sections:
         parts.append("## " + title + "\n")
@@ -186,6 +189,7 @@ def main():
                                       "--seed", str(args.seed)]),
             ("label it with the 4 livelock conditions", ["labeling.py", "--group", "dataset", "--sensitivity"]),
             ("train and evaluate the prediction model", ["prediction_model.py"]),
+            ("evaluate the model in full (all metrics, cost)", ["evaluate_model.py"]),
             ("build the time-varying service graph", ["graph_builder.py"]),
             ("run the five-strategy experiments", ["experiment_arms.py", "--reps", str(reps),
                                                    "--experiments", experiments]),

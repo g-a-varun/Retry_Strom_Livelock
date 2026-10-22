@@ -1,0 +1,78 @@
+% overall architecture, five layers A-E
+\begin{tikzpicture}[font=\scriptsize]
+% ---- A: workload and fault injection
+\node[blk, text width=44mm] (lg) at (2.9,0) {\textbf{Load generator}\\open-loop Poisson users, 12--28 per second};
+\node[blk, text width=44mm] (fi) at (8.75,0) {\textbf{Fault injector}\\latency or error rate of one service};
+\node[blk, text width=44mm] (mf) at (14.6,0) {\textbf{Scenario manifest}\\start and end of every phase (ground truth)};
+% ---- B: testbed
+\node[blk, text width=20mm] (gw) at (1.95,-2.35) {\textbf{Gateway} :5000\\no slot limit};
+\node[blk, text width=22mm] (ord) at (5.2,-2.35) {\textbf{Order} :5003\\8 slots, wait 1 or 10\,s};
+\node[blk, text width=24mm] (pay) at (8.9,-1.9) {\textbf{Payment} :5001, 2 slots};
+\node[blk, text width=24mm] (inv) at (8.9,-2.8) {\textbf{Inventory} :5002, 2 slots};
+\node[blk, text width=44mm] (rc) at (14.6,-2.35) {\textbf{Retry client} (in every caller)\\up to 3 attempts, 2\,s timeout, backoff\\with jitter, optional retry budget};
+% ---- C: telemetry
+\node[blk, text width=44mm] (t1) at (2.9,-4.75) {telemetry\_\textless caller\textgreater.jsonl\\one line per call attempt};
+\node[blk, text width=44mm] (t2) at (8.75,-4.75) {server\_\textless service\textgreater.jsonl\\one line per request (+ orphan flag)};
+\node[blk, text width=44mm] (t3) at (14.6,-4.75) {user\_requests.jsonl\\one line per user request};
+% ---- D: offline
+\node[blk, text width=15mm] (win) at (0.95,-7.15) {Windows\\edge $\times$ 2\,s};
+\node[blk, text width=15mm] (lab) at (3.05,-7.15) {Labeller\\C1--C4};
+\node[blk, text width=15mm] (fea) at (5.15,-7.15) {Features\\16 values};
+\node[blk, text width=15mm] (mdl) at (7.25,-7.15) {Model\\train + test};
+\node[font=\tiny\ttfamily] (lw) at (3.05,-8.1) {labeled\_windows.csv};
+\node[font=\tiny\ttfamily] (mj) at (7.25,-8.1) {model.json};
+% ---- E: online
+\node[blk, text width=15mm] (tail) at (10.2,-7.15) {Tail reader\\new lines only};
+\node[blk, text width=15mm] (live) at (12.15,-7.15) {Live stats\\+ features};
+\node[blk, text width=19mm] (risk) at (14.25,-7.15) {Risk $p$\\$\sigma(\mathbf{w}\cdot\mathbf{x}+b)$};
+\node[blk, text width=15mm] (dec) at (16.5,-7.15) {Decide\\cut/hold/restore};
+\node[font=\tiny\ttfamily] (pol) at (16.5,-8.1) {retry\_policy.json};
+
+% arrows
+\draw[->] (lg.south) -- node[right, pos=0.3] {users} (lg.south |- gw.north);
+\draw[->] (fi.south) -- node[right] {slow down / errors} (fi.south |- pay.north);
+\draw[->] (gw) -- node[above] {e1} (ord);
+\draw[->] (ord.east) -- node[above] {e2} (pay.west);
+\draw[->] (ord.east) -- node[below] {e3} (inv.west);
+\draw[->] (gw.south) -- node[right, pos=0.42] {every attempt} (gw.south |- t1.north);
+\draw[->] (inv.south) -- node[right, pos=0.3] {every request} (inv.south |- t2.north);
+% bus from telemetry to the two readers
+\draw (t1.south) -- ++(0,-0.5) coordinate (b1);
+\draw (t2.south) -- ++(0,-0.5);
+\draw (t3.south) -- ++(0,-0.5) coordinate (b3);
+\draw (b1 -| win.north) -- (b3);
+\draw[->] (b1 -| win.north) -- (win.north);
+\draw[->] (b1 -| tail.north) -- (tail.north);
+% chains
+\draw[->] (win) -- (lab);
+\draw[->] (lab) -- (fea);
+\draw[->] (fea) -- (mdl);
+\draw[->] (lab) -- (lw);
+\draw[->] (mdl) -- (mj);
+\draw[->] (tail) -- (live);
+\draw[->] (live) -- (risk);
+\draw[->] (risk) -- (dec);
+\draw[->] (dec) -- (pol);
+\draw[->] (mj.east) -- node[below] {weights} (mj.east -| risk.south) -- (risk.south);
+% feedback loop
+\draw[->, thick] (pol.east) -- (17.95,-8.1) -- node[pos=0.5, sloped, below] {read by every retry client on its next call} (17.95,-2.35) -- (rc.east);
+
+% layer boxes (a little headroom above each row for its label)
+\path (lg.north) ++(0,0.42) coordinate (topA);
+\path (rc.north) ++(0,0.42) coordinate (topB);
+\path (t1.north) ++(0,0.42) coordinate (topC);
+\path (win.north) ++(0,0.42) coordinate (topD);
+\path (tail.north) ++(0,0.42) coordinate (topE);
+\begin{scope}[on background layer]
+\node[grp, fit=(lg)(fi)(mf)(topA)] (A) {};
+\node[grp, fit=(gw)(ord)(pay)(inv)(rc)(topB)] (B) {};
+\node[grp, fit=(t1)(t2)(t3)(topC)] (C) {};
+\node[grp, fit=(win)(lab)(fea)(mdl)(lw)(mj)(topD)] (D) {};
+\node[grp, fit=(tail)(live)(risk)(dec)(pol)(topE)] (E) {};
+\end{scope}
+\node[grplabel] at (A.north east) {A. Workload and fault injection (\texttt{scenario\_runner.py})};
+\node[grplabel] at (B.north east) {B. Microservice testbed: 4 OS processes, real HTTP calls (\texttt{services/})};
+\node[grplabel] at (C.north east) {C. Telemetry: one JSON line per event (\texttt{common/telemetry.py})};
+\node[grplabel] at (D.north east) {D. Offline analysis and learning};
+\node[grplabel] at (E.north east) {E. Online control loop, every 1\,s (\texttt{controller.py})};
+\end{tikzpicture}

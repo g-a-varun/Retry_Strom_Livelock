@@ -1,0 +1,29 @@
+% one control step, done for every edge every second (controller.py)
+\begin{tikzpicture}[font=\scriptsize]
+\node[term] (st) at (0,0) {Every 1\,s};
+\node[blk, text width=52mm] (rd) at (0,-1.0) {Read the new log lines; for each edge compute\\$n$, $\rho$, overload and risk $p$ over the last 2\,s};
+\node[dec] (d1) at (0,-2.45) {$n \ge 3$\\calls?};
+\node[blk, text width=17mm] (h1) at (3.55,-2.45) {HOLD\\(no change)};
+\node[dec] (d2) at (0,-4.0) {Risky?};
+\node[dec, aspect=2.4] (d3) at (3.55,-4.0) {Calm 3 checks\\and $\ge$4\,s\\since cut?};
+\node[blk, text width=26mm] (mk) at (0,-5.5) {Mark this edge and the\\edge above it (path rule)};
+\node[blk, text width=17mm] (rs) at (3.55,-5.5) {\textbf{RESTORE}\\attempts $+1$,\\backoff $\div 2$};
+\node[dec] (d4) at (0,-6.95) {$\ge$2\,s since\\last cut?};
+\node[blk, text width=9mm] (h2) at (-2.4,-6.95) {HOLD};
+\node[blk, text width=34mm] (ct) at (0,-8.35) {\textbf{CUT}: attempts $-1$ (min 1),\\backoff $\times 2$ (max $\times 4$)};
+\node[blk, text width=42mm] (wr) at (0,-9.45) {If anything changed: write\\\texttt{retry\_policy.json} (temp file + rename)};
+
+\draw[->] (st) -- (rd);
+\draw[->] (rd) -- (d1);
+\draw[->] (d1) -- node[above] {no} (h1);
+\draw[->] (d1) -- node[right] {yes} (d2);
+\draw[->] (d2) -- node[above] {no} (d3);
+\draw[->] (d3) -- node[right] {no} (h1);
+\draw[->] (d3) -- node[right] {yes} (rs);
+\draw[->] (d2) -- node[right] {yes} (mk);
+\draw[->] (mk) -- (d4);
+\draw[->] (d4) -- node[above] {no} (h2);
+\draw[->] (d4) -- node[right] {yes} (ct);
+\draw[->] (ct) -- (wr);
+\draw[->] (rs.south) -- (rs.south |- wr.east) -- (wr.east);
+\end{tikzpicture}
