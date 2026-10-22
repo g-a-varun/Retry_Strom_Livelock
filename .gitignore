@@ -21,15 +21,8 @@ code/results_previous/
 *.tar.gz
 MSCallGraph_*
 
-# ---- Staging area, not part of the project ----
-DELETE/
-
 # ---- Office / OS clutter ----
 ~$*
 Thumbs.db
 desktop.ini
 .DS_Store
-
-docs/
-
-docs/
